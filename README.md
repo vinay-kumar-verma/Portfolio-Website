@@ -1,5 +1,65 @@
-# Portfolio-Website
-Welcome to my portfolio website! I created this site to showcase my skills, projects, and achievements. Using HTML for the structure, CSS for the style, and JavaScript for interactivity, I built this site from the ground up. Every line of code reflects my dedication to mastering web development. This project has been a game-changer in my learning journey, allowing me to dive deep into the core technologies of the web. It challenged me, sharpened my problem-solving skills, and boosted my confidence in creating dynamic, user-friendly websites.
+# Personal Portfolio Website
 
-Explore my projects, learn about my background, and see how I bring ideas to life. This website is not just a display; it's a testament to my dedication and drive to excel in my field. Dive in and get to know what I'm capable of!
+A responsive portfolio website built using HTML, CSS, and JavaScript to showcase my professional experience, technical skills, projects, certifications, and contact information.
+
+## Live Demo
+
 https://vinay-kumar-verma.github.io/Portfolio-Website/
+
+## Features
+
+* Responsive design for desktop and mobile devices
+* Professional project showcase section
+* Skills and technology stack overview
+* Education and certification highlights
+* Contact section for networking and opportunities
+* Clean and user-friendly interface
+
+## Tech Stack
+
+* HTML5
+* CSS3
+* JavaScript
+
+## Project Structure
+
+```text
+Portfolio-Website/
+│
+├── index.html
+├── css/
+├── js/
+├── assets/
+└── images/
+```
+
+## Screenshots
+
+Add screenshots of:
+
+* Homepage
+* Projects section
+* Skills section
+* Contact section
+
+## What I Learned
+
+* Responsive web design principles
+* DOM manipulation using JavaScript
+* UI/UX fundamentals
+* Project deployment using GitHub Pages
+* Front-end project organization and structure
+
+## Future Improvements
+
+* Dark mode support
+* Blog section
+* Project filtering
+* Contact form integration
+* React-based version
+
+## Author
+
+Vinay Kumar Verma
+
+QA Automation Engineer | Java | Selenium | TestNG | SQL | REST APIs
