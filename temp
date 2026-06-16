@@ -1,0 +1,4747 @@
+# Conversation handoff from Claude (claude.ai)
+
+**Title:** Sports matchmaking app foundation  ·  **Started:** June 6, 2026  ·  **Turns:** 256
+
+## Briefing
+
+You are continuing a working session that began in Claude. Read the briefing, the artefacts, and the recent turns below. Pick up where the previous assistant left off — don't re-introduce yourself, match the user's working style.
+
+**Where the previous assistant left off:**
+> # Sporty App — Full QA Audit Report --- ## EXECUTIVE SUMMARY Before I dive in, let me be direct: **this app is not production ready**. It's a solid MVP prototype, but shipping it to 100,000 users tomorrow would be catastrophic. Here's the complete breakdown. --- # SECTION 1 — ARCHITECTURE & CODEBAS…
+
+---
+
+## Recent conversation (last 10 of 256 turns — full transcript attached as a file)
+
+**User:**
+PS C:\Projects\sporty> flutter run -d chrome
+Launching lib\main.dart on Chrome in debug mode...
+lib/features/game/presentation/screens/create_game_screen.dart:305:33: Error: Expected ',' before this.
+                                AppConstants.maxPlayersLimit
+                                ^^^^^^^^^^^^
+lib/features/game/presentation/screens/create_game_screen.dart:303:33: Error: Too many positional arguments: 0 allowed, but 1 found.
+Try removing the extra positional arguments.
+                      IconButton(
+                                ^
+/C:/flutter/packages/flutter/lib/src/material/icon_button.dart:186:9: Context: Found this candidate, but the arguments don't match.
+  const IconButton({
+        ^^^^^^^^^^
+lib/features/game/presentation/screens/game_detail_screen.dart:521:44: Error: Required named parameter 'gameDateTime' must be provided.
+                                  .joinGame(
+                                           ^
+lib/features/game/data/game_repository.dart:47:47: Error: Required named parameter 'durationMinutes' must be provided.
+    final conflict = await _getConflictingGame(
+                                              ^
+lib/features/game/data/game_repository.dart:78:47: Error: Required named parameter 'durationMinutes' must be provided.
+    final conflict = await _getConflictingGame(
+                                              ^
+Waiting for connection from debug service on Chrome...             89.2s
+Failed to compile application.
+
+**Assistant:**
+Three quick fixes needed. Let me address each error:
+
+---
+
+## Fix 1 — `game_repository.dart`
+
+The `_getConflictingGame` has a required `durationMinutes` param that's unnecessary. Open it, select all, replace:
+
+```dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:uuid/uuid.dart';
+import '../../home/domain/game_model.dart';
+
+class CreateGameRepository {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final _uuid = const Uuid();
+
+  Future<GameModel?> _getConflictingGame({
+    required String userId,
+    required DateTime dateTime,
+    String? excludeGameId,
+  }) async {
+    final start = dateTime;
+    final end = dateTime.add(const Duration(hours: 2));
+
+    final snapshot = await _firestore
+        .collection('games')
+        .where('joinedPlayerIds', arrayContains: userId)
+        .get();
+
+    for (final doc in snapshot.docs) {
+      final game = GameModel.fromMap(doc.data());
+      if (excludeGameId != null && game.id == excludeGameId) continue;
+      final gameStart = game.dateTime;
+      final gameEnd = game.dateTime.add(const Duration(hours: 2));
+      if (start.isBefore(gameEnd) && end.isAfter(gameStart)) {
+        return game;
+      }
+    }
+    return null;
+  }
+
+  Future<String?> createGame({
+    required String hostId,
+    required String hostName,
+    required String sport,
+    required String venue,
+    required DateTime dateTime,
+    required int totalPlayersNeeded,
+    required String skillLevel,
+    String? notes,
+  }) async {
+    final conflict = await _getConflictingGame(
+      userId: hostId,
+      dateTime: dateTime,
+    );
+    if (conflict != null) {
+      return 'You already have a game (${conflict.sport} at ${conflict.venue}) at this time. Choose a different time.';
+    }
+
+    final id = _uuid.v4();
+    final game = GameModel(
+      id: id,
+      hostId: hostId,
+      hostName: hostName,
+      sport: sport,
+      venue: venue,
+      dateTime: dateTime,
+      totalPlayersNeeded: totalPlayersNeeded,
+      joinedPlayerIds: [hostId],
+      skillLevel: skillLevel,
+      notes: notes,
+      createdAt: DateTime.now(),
+    );
+    await _firestore.collection('games').doc(id).set(game.toMap());
+    return null;
+  }
+
+  Future<String?> joinGame({
+    required String gameId,
+    required String userId,
+    required DateTime gameDateTime,
+  }) async {
+    final conflict = await _getConflictingGame(
+      userId: userId,
+      dateTime: gameDateTime,
+      excludeGameId: gameId,
+    );
+    if (conflict != null) {
+      return 'You are already playing ${conflict.sport} at ${conflict.venue} at this time.';
+    }
+    await _firestore.collection('games').doc(gameId).update({
+      'joinedPlayerIds': FieldValue.arrayUnion([userId]),
+    });
+    return null;
+  }
+
+  Future<void> leaveGame({
+    required String gameId,
+    required String userId,
+  }) async {
+    await _firestore.collection('games').doc(gameId).update({
+      'joinedPlayerIds': FieldValue.arrayRemove([userId]),
+    });
+  }
+
+  Stream<GameModel> getGameStream(String gameId) {
+    return _firestore
+        .collection('games')
+        .doc(gameId)
+        .snapshots()
+        .map((doc) => GameModel.fromMap(doc.data()!));
+  }
+}
+```
+
+---
+
+## Fix 2 — `create_game_screen.dart` IconButton
+
+Find the minus IconButton (around line 297) and replace both IconButtons with:
+
+```dart
+IconButton(
+  onPressed: _playersNeeded > AppConstants.minPlayersLimit
+      ? () => setState(() => _playersNeeded--)
+      : null,
+  icon: const Icon(Icons.remove_circle_outline),
+  color: AppColors.primary,
+),
+Text(
+  '$_playersNeeded',
+  style: const TextStyle(
+    color: AppColors.textPrimary,
+    fontSize: 18,
+    fontWeight: FontWeight.bold,
+  ),
+),
+IconButton(
+  onPressed: _playersNeeded < AppConstants.maxPlayersLimit
+      ? () => setState(() => _playersNeeded++)
+      : null,
+  icon: const Icon(Icons.add_circle_outline),
+  color: AppColors.primary,
+),
+```
+
+---
+
+## Fix 3 — `game_detail_screen.dart` joinGame call
+
+Find the `joinGame` call and make sure it includes `gameDateTime`:
+
+```dart
+final error = await ref
+    .read(createGameRepositoryProvider)
+    .joinGame(
+      gameId: game.id,
+      userId: currentUser!.uid,
+      gameDateTime: game.dateTime,
+    );
+```
+
+Save all, run `flutter run -d chrome`.
+
+**User:**
+this is my current game_detail_screen
+update this and give the entire code, because I cant find what you are looking for
+
+**Assistant:**
+Here's the complete updated `game_detail_screen.dart` with all fixes applied:
+
+```dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
+import '../../../home/domain/game_model.dart';
+import 'create_game_screen.dart';
+import '../../data/game_repository.dart';
+
+final gameStreamProvider =
+    StreamProvider.family<GameModel, String>((ref, gameId) {
+  return ref.watch(createGameRepositoryProvider).getGameStream(gameId);
+});
+
+class GameDetailScreen extends ConsumerWidget {
+  final String gameId;
+
+  const GameDetailScreen({super.key, required this.gameId});
+
+  Color _skillColor(String level) {
+    switch (level) {
+      case 'Beginner':
+        return const Color(0xFF4CAF50);
+      case 'Intermediate':
+        return const Color(0xFFFF9800);
+      case 'Advanced':
+        return const Color(0xFFF44336);
+      default:
+        return AppColors.textSecondary;
+    }
+  }
+
+  String _emojiForSport(String sport) {
+    const emojis = {
+      'Badminton': '🏸',
+      'Cricket': '🏏',
+      'Football': '⚽',
+      'Tennis': '🎾',
+      'Basketball': '🏀',
+      'Volleyball': '🏐',
+      'Swimming': '🏊',
+      'Table Tennis': '🏓',
+      'Cycling': '🚴',
+      'Running': '🏃',
+    };
+    return emojis[sport] ?? '🏅';
+  }
+
+  Future<void> _editTime(BuildContext context, GameModel game) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(game.dateTime),
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: AppColors.primary,
+            surface: AppColors.surface,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked != null) {
+      final newDateTime = DateTime(
+        game.dateTime.year,
+        game.dateTime.month,
+        game.dateTime.day,
+        picked.hour,
+        picked.minute,
+      );
+      await FirebaseFirestore.instance
+          .collection('games')
+          .doc(game.id)
+          .update({'dateTime': newDateTime.toIso8601String()});
+    }
+  }
+
+  Future<void> _editNotes(BuildContext context, GameModel game) async {
+    final controller = TextEditingController(text: game.notes ?? '');
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Edit Notes',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: TextField(
+          controller: controller,
+          style: const TextStyle(color: AppColors.textPrimary),
+          maxLines: 3,
+          decoration: const InputDecoration(
+            hintText: 'Add notes...',
+            hintStyle: TextStyle(color: AppColors.textHint),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () async {
+              await FirebaseFirestore.instance
+                  .collection('games')
+                  .doc(game.id)
+                  .update({'notes': controller.text.trim()});
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Save',
+                style: TextStyle(color: AppColors.primary)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showNoEditWarning(BuildContext context, String field) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text('Cannot edit $field',
+            style: const TextStyle(color: AppColors.textPrimary)),
+        content: Text(
+          '$field cannot be changed after a game is created to avoid confusion for players who have already joined.',
+          style: const TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Got it',
+                style: TextStyle(color: AppColors.primary)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPlayersList(BuildContext context, GameModel game,
+      String? currentUid, bool canView) {
+    if (!canView) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          content: const Text(
+            'Join the game to see who else is playing.',
+            style: TextStyle(color: AppColors.textSecondary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK',
+                  style: TextStyle(color: AppColors.primary)),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${game.playersJoined} Player${game.playersJoined == 1 ? '' : 's'} Joined',
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ...game.joinedPlayerIds.map((uid) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 20,
+                        backgroundColor: AppColors.surfaceLight,
+                        child: Text(
+                          uid == game.hostId ? '👑' : '🏅',
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        uid == game.hostId
+                            ? '${game.hostName} (Host)'
+                            : uid == currentUid
+                                ? 'You'
+                                : 'Player',
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final gameAsync = ref.watch(gameStreamProvider(gameId));
+    final currentUser = ref.watch(authRepositoryProvider).currentUser;
+
+    return gameAsync.when(
+      loading: () => const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+      ),
+      error: (e, _) => Scaffold(
+        appBar: AppBar(),
+        body: Center(
+          child: Text('Error: $e',
+              style: const TextStyle(color: AppColors.error)),
+        ),
+      ),
+      data: (game) {
+        final isJoined = currentUser != null &&
+            game.joinedPlayerIds.contains(currentUser.uid);
+        final isHost = currentUser?.uid == game.hostId;
+        final canJoin = !game.isFull && !isJoined && !isHost;
+        final canViewPlayers = isJoined || isHost;
+
+        return Scaffold(
+          appBar: AppBar(
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => context.pop(),
+            ),
+            title: Text(game.sport),
+            actions: isHost
+                ? [
+                    Container(
+                      margin: const EdgeInsets.only(right: 16),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.star,
+                              color: AppColors.primary, size: 14),
+                          SizedBox(width: 4),
+                          Text(
+                            'Host',
+                            style: TextStyle(
+                              color: AppColors.primary,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ]
+                : null,
+          ),
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Hero section
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: AppColors.cardBorder),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        _emojiForSport(game.sport),
+                        style: const TextStyle(fontSize: 64),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        game.sport,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _skillColor(game.skillLevel)
+                              .withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          game.skillLevel,
+                          style: TextStyle(
+                            color: _skillColor(game.skillLevel),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Info section
+                _InfoRow(
+                  icon: Icons.person_outline,
+                  label: 'Host',
+                  value: game.hostName,
+                ),
+                GestureDetector(
+                  onTap: isHost
+                      ? () => _showNoEditWarning(context, 'Venue')
+                      : null,
+                  child: _InfoRow(
+                    icon: Icons.location_on_outlined,
+                    label: 'Venue',
+                    value: game.venue,
+                    isEditable: false,
+                    isHost: isHost,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: isHost
+                      ? () => _showNoEditWarning(context, 'Date')
+                      : null,
+                  child: _InfoRow(
+                    icon: Icons.calendar_today_outlined,
+                    label: 'Date',
+                    value: DateFormat('EEEE, MMMM d')
+                        .format(game.dateTime),
+                    isEditable: false,
+                    isHost: isHost,
+                  ),
+                ),
+                GestureDetector(
+                  onTap:
+                      isHost ? () => _editTime(context, game) : null,
+                  child: _InfoRow(
+                    icon: Icons.access_time,
+                    label: 'Time',
+                    value:
+                        DateFormat('h:mm a').format(game.dateTime),
+                    isEditable: isHost,
+                    isHost: isHost,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: isHost
+                      ? () => _editNotes(context, game)
+                      : null,
+                  child: _InfoRow(
+                    icon: Icons.notes_outlined,
+                    label: 'Notes',
+                    value: game.notes != null &&
+                            game.notes!.isNotEmpty
+                        ? game.notes!
+                        : isHost
+                            ? 'Tap to add notes'
+                            : 'No notes',
+                    isEditable: isHost,
+                    isHost: isHost,
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Players section
+                const Text(
+                  'Players',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: game.playersJoined /
+                              game.totalPlayersNeeded,
+                          backgroundColor: AppColors.surfaceLight,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            game.isFull
+                                ? AppColors.error
+                                : AppColors.primary,
+                          ),
+                          minHeight: 8,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      '${game.playersJoined}/${game.totalPlayersNeeded} joined',
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  game.isFull
+                      ? 'Game is full'
+                      : '${game.spotsLeft} spot${game.spotsLeft == 1 ? '' : 's'} left',
+                  style: TextStyle(
+                    color: game.isFull
+                        ? AppColors.error
+                        : AppColors.textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Players list button
+                Opacity(
+                  opacity: canViewPlayers ? 1.0 : 0.4,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _showPlayersList(context, game,
+                        currentUser?.uid, canViewPlayers),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.surfaceLight,
+                      foregroundColor: AppColors.textPrimary,
+                      minimumSize: const Size(double.infinity, 52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.people_outline),
+                    label: Text(
+                        '${game.playersJoined}/${game.totalPlayersNeeded} Joined — View Players'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // Chat button
+                Opacity(
+                  opacity: canViewPlayers ? 1.0 : 0.4,
+                  child: ElevatedButton.icon(
+                    onPressed: canViewPlayers
+                        ? () => context.push(
+                              '/chat/${game.id}?name=${Uri.encodeComponent(game.sport)}',
+                            )
+                        : () => showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: AppColors.surface,
+                                content: const Text(
+                                  'Join the game to access the group chat.',
+                                  style: TextStyle(
+                                      color: AppColors.textSecondary),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(ctx),
+                                    child: const Text('OK',
+                                        style: TextStyle(
+                                            color: AppColors.primary)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.surfaceLight,
+                      foregroundColor: AppColors.textPrimary,
+                      minimumSize: const Size(double.infinity, 52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(Icons.chat_bubble_outline),
+                    label: const Text('Group Chat'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // Join / Leave button
+                if (!isHost) ...[
+                  if (isJoined)
+                    OutlinedButton(
+                      onPressed: () async {
+                        await ref
+                            .read(createGameRepositoryProvider)
+                            .leaveGame(
+                              gameId: game.id,
+                              userId: currentUser!.uid,
+                            );
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('You left the game'),
+                              backgroundColor: AppColors.error,
+                            ),
+                          );
+                        }
+                      },
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size(double.infinity, 52),
+                        side:
+                            const BorderSide(color: AppColors.error),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Leave Game',
+                        style: TextStyle(
+                          color: AppColors.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    )
+                  else
+                    ElevatedButton(
+                      onPressed: canJoin
+                          ? () async {
+                              final error = await ref
+                                  .read(createGameRepositoryProvider)
+                                  .joinGame(
+                                    gameId: game.id,
+                                    userId: currentUser!.uid,
+                                    gameDateTime: game.dateTime,
+                                  );
+                              if (context.mounted) {
+                                if (error != null) {
+                                  showDialog(
+                                    context: context,
+                                    builder: (ctx) => AlertDialog(
+                                      backgroundColor:
+                                          AppColors.surface,
+                                      content: Text(
+                                        error,
+                                        style: const TextStyle(
+                                            color: AppColors
+                                                .textSecondary),
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(ctx),
+                                          child: const Text('OK',
+                                              style: TextStyle(
+                                                  color: AppColors
+                                                      .primary)),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                } else {
+                                  ScaffoldMessenger.of(context)
+                                      .showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          "You've joined the game! 🎉"),
+                                      backgroundColor:
+                                          AppColors.success,
+                                    ),
+                                  );
+                                }
+                              }
+                            }
+                          : null,
+                      child: Text(
+                          game.isFull ? 'Game Full' : 'Join Game'),
+                    ),
+                ],
+
+                // Cancel game button for host
+                if (isHost)
+                  ElevatedButton(
+                    onPressed: () async {
+                      final confirm = await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          backgroundColor: AppColors.surface,
+                          title: const Text(
+                            'Cancel Game?',
+                            style: TextStyle(
+                                color: AppColors.textPrimary),
+                          ),
+                          content: const Text(
+                            'This will permanently delete the game for all players.',
+                            style: TextStyle(
+                                color: AppColors.textSecondary),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.pop(ctx, false),
+                              child: const Text('Keep Game',
+                                  style: TextStyle(
+                                      color:
+                                          AppColors.textSecondary)),
+                            ),
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.pop(ctx, true),
+                              child: const Text('Cancel Game',
+                                  style: TextStyle(
+                                      color: AppColors.error)),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirm == true) {
+                        await FirebaseFirestore.instance
+                            .collection('games')
+                            .doc(game.id)
+                            .delete();
+                        if (context.mounted) context.go('/home');
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.error,
+                      minimumSize: const Size(double.infinity, 52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Cancel Game',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool isEditable;
+  final bool isHost;
+
+  const _InfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.isEditable = false,
+    this.isHost = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AppColors.primary, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (isHost && isEditable) ...[
+                      const SizedBox(width: 4),
+                      const Icon(Icons.edit,
+                          color: AppColors.primary, size: 12),
+                    ],
+                    if (isHost && !isEditable && label != 'Host') ...[
+                      const SizedBox(width: 4),
+                      const Icon(Icons.lock_outline,
+                          color: AppColors.textHint, size: 12),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+Save, run `flutter run -d chrome`. Tell me what you see!
+
+**User:**
+The changes looks good. Before we go into fixes again, here me out. 
+Whenever you give me a fix, give me the entire code block because you give me just a block of code which makes it difficult to find and replace that chunk. Either you give me the entire code from start to end ir you give me proper instructions on where to find that chunk and what all parts are needs to be changed/updates, actually it would be better if you give me the entire code which I can just paste it in the file. Another thing, whenever you ask to update any file, do tell its location at the top because it is difficult to locate.
+
+Fix 1: In profile, in profile picture icon, it should display initials of the name for example VV for vinay verma, ss for suyash singh and D for dinesh or S suresh or if it a 3 word name like vinay kumar singh display it as VS.
+Fix 2: While updating the information in profile section, and clicking save it says profile updated but when clicking back and coming back to profile page everythings gone like nothing was ever updated.
+Fix 3: In your games section only the games hosted bu you should be visible the games joined by the user should be shown in Joined games section.
+Fix 4: On the joined games, we see a logo of joined in that logo remove the tick mark and star just keep  joined. Also remove the star from hosted by you just keep the message
+Fix 5: In 3 lined menu, add starred games where users can starr some games they want to pick so that they dont have to scroll again and again to find their respective game.
+Fix 6: To starr a game, on the game detail on top right corner make a empty star upon clicking which user can star the game and that game will be shown in starred games section too.
+Fix 7: We did fixed creating games with overlapping times, might as well stop users from joining games with overlapping time and also if host is editing the game time or date it should also not overlap so take care of that also.
+Fix 8: In global chat, on that chats of the game which are hosted by me it should show (host) in bracket or (*).
+Fix 9: In game details screen, there should be a button of 'chat with host' or contact host through which any user can directly chat with host and ask any questions.
+Fix 10: The message sent by user to the host should also be seen in global chat as their name and under which from which game they have texted.
+Fix 11: under sporty emblem, there should also be written location under it and In place of games near you, it should be written as game near <your location>.
+Fix 12: Upon clicking the location which is mentioned under sporty embelem, user should be able to change their location.
+
+**Assistant:**
+Understood. From now on I'll always give complete files with the file path at the top.
+
+Let me address these fixes one by one. Some are complex (Fix 5, 6, 9, 10, 11, 12) so let me plan them properly first.
+
+---
+
+## What needs new files
+
+- Fix 5/6 — Starred Games screen + star logic in Firestore
+- Fix 9/10 — Direct messages between users (this is essentially a separate chat feature)
+- Fix 11/12 — Location detection and display
+
+---
+
+## Honest Assessment on Fix 9 & 10
+
+Fix 9 asks for direct messaging between users. Fix 10 asks those messages to appear in the global chat. This is actually a significant feature that contradicts our MVP scope — we explicitly excluded direct messaging. I'd recommend we defer Fix 9 and 10 to Version 2 and focus on the rest. Let me know if you agree.
+
+Fix 11 and 12 require device location permission and reverse geocoding. I'll implement it cleanly.
+
+---
+
+Let's start. Here are all the files:
+
+---
+
+## `lib/features/auth/domain/user_model.dart`
+
+```dart
+class UserModel {
+  final String uid;
+  final String phone;
+  final String? name;
+  final String? photoUrl;
+  final List<String> sports;
+  final String? preferredLocation;
+  final DateTime createdAt;
+  final String? about;
+  final int? age;
+  final String? gender;
+  final List<String> starredGameIds;
+
+  const UserModel({
+    required this.uid,
+    required this.phone,
+    this.name,
+    this.photoUrl,
+    this.sports = const [],
+    this.preferredLocation,
+    required this.createdAt,
+    this.about,
+    this.age,
+    this.gender,
+    this.starredGameIds = const [],
+  });
+
+  bool get isProfileComplete => name != null && name!.isNotEmpty;
+
+  String get initials {
+    if (name == null || name!.trim().isEmpty) return '?';
+    final parts = name!.trim().split(' ').where((p) => p.isNotEmpty).toList();
+    if (parts.length == 1) return parts[0][0].toUpperCase();
+    if (parts.length == 2) {
+      return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+    }
+    // 3+ words: first + last initial
+    return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'uid': uid,
+      'phone': phone,
+      'name': name,
+      'photoUrl': photoUrl,
+      'sports': sports,
+      'preferredLocation': preferredLocation,
+      'createdAt': createdAt.toIso8601String(),
+      'about': about,
+      'age': age,
+      'gender': gender,
+      'starredGameIds': starredGameIds,
+    };
+  }
+
+  factory UserModel.fromMap(Map<String, dynamic> map) {
+    return UserModel(
+      uid: map['uid'] ?? '',
+      phone: map['phone'] ?? '',
+      name: map['name'],
+      photoUrl: map['photoUrl'],
+      sports: List<String>.from(map['sports'] ?? []),
+      preferredLocation: map['preferredLocation'],
+      createdAt: DateTime.parse(
+        map['createdAt'] ?? DateTime.now().toIso8601String(),
+      ),
+      about: map['about'],
+      age: map['age'],
+      gender: map['gender'],
+      starredGameIds: List<String>.from(map['starredGameIds'] ?? []),
+    );
+  }
+
+  UserModel copyWith({
+    String? name,
+    String? photoUrl,
+    List<String>? sports,
+    String? preferredLocation,
+    String? about,
+    int? age,
+    String? gender,
+    List<String>? starredGameIds,
+  }) {
+    return UserModel(
+      uid: uid,
+      phone: phone,
+      name: name ?? this.name,
+      photoUrl: photoUrl ?? this.photoUrl,
+      sports: sports ?? this.sports,
+      preferredLocation: preferredLocation ?? this.preferredLocation,
+      createdAt: createdAt,
+      about: about ?? this.about,
+      age: age ?? this.age,
+      gender: gender ?? this.gender,
+      starredGameIds: starredGameIds ?? this.starredGameIds,
+    );
+  }
+}
+```
+
+---
+
+## `lib/features/auth/presentation/controllers/auth_controller.dart`
+
+```dart
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../data/auth_repository.dart';
+import '../../domain/user_model.dart';
+
+final authRepositoryProvider = Provider<AuthRepository>((ref) {
+  return AuthRepository();
+});
+
+final authStateProvider = StreamProvider<User?>((ref) {
+  return ref.watch(authRepositoryProvider).authStateChanges;
+});
+
+enum AuthStatus { idle, loading, otpSent, success, error }
+
+class AuthState {
+  final AuthStatus status;
+  final String? verificationId;
+  final String? errorMessage;
+
+  const AuthState({
+    this.status = AuthStatus.idle,
+    this.verificationId,
+    this.errorMessage,
+  });
+
+  AuthState copyWith({
+    AuthStatus? status,
+    String? verificationId,
+    String? errorMessage,
+  }) {
+    return AuthState(
+      status: status ?? this.status,
+      verificationId: verificationId ?? this.verificationId,
+      errorMessage: errorMessage ?? this.errorMessage,
+    );
+  }
+}
+
+class AuthController extends StateNotifier<AuthState> {
+  final AuthRepository _repository;
+
+  AuthController(this._repository) : super(const AuthState());
+
+  Future<void> sendOtp(String phoneNumber) async {
+    state = state.copyWith(status: AuthStatus.loading);
+    await _repository.sendOtp(
+      phoneNumber: phoneNumber,
+      onAutoVerified: (credential) async {
+        await FirebaseAuth.instance.signInWithCredential(credential);
+        state = state.copyWith(status: AuthStatus.success);
+      },
+      onCodeSent: (verificationId) {
+        state = state.copyWith(
+          status: AuthStatus.otpSent,
+          verificationId: verificationId,
+        );
+      },
+      onError: (error) {
+        state = state.copyWith(
+          status: AuthStatus.error,
+          errorMessage: error,
+        );
+      },
+    );
+  }
+
+  Future<bool> verifyOtp(String otp) async {
+    if (state.verificationId == null) return false;
+    state = state.copyWith(status: AuthStatus.loading);
+    try {
+      await _repository.verifyOtp(
+        verificationId: state.verificationId!,
+        otp: otp,
+      );
+      state = state.copyWith(status: AuthStatus.success);
+      return true;
+    } catch (e) {
+      state = state.copyWith(
+        status: AuthStatus.error,
+        errorMessage: 'Invalid OTP. Please try again.',
+      );
+      return false;
+    }
+  }
+
+  void reset() {
+    state = const AuthState();
+  }
+}
+
+final authControllerProvider =
+    StateNotifierProvider<AuthController, AuthState>((ref) {
+  return AuthController(ref.watch(authRepositoryProvider));
+});
+
+final currentUserModelProvider = FutureProvider<UserModel?>((ref) async {
+  final user = ref.watch(authStateProvider).value;
+  if (user == null) return null;
+  final existing =
+      await ref.watch(authRepositoryProvider).getUser(user.uid);
+  if (existing != null) return existing;
+  final newUser = UserModel(
+    uid: user.uid,
+    phone: user.phoneNumber ?? '',
+    name: 'Sporty User',
+    sports: [],
+    createdAt: DateTime.now(),
+  );
+  await ref.watch(authRepositoryProvider).saveUser(newUser);
+  return newUser;
+});
+```
+
+---
+
+## `lib/features/profile/presentation/screens/profile_screen.dart`
+
+Fix 1 (initials logic) and Fix 2 (profile save not persisting) are both fixed here. The bug in Fix 2 was that `_initialized` was never reset when the user model refreshed, so fields never updated from Firestore. Fixed by using a key-based rebuild.
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_constants.dart';
+import '../../../auth/data/auth_repository.dart';
+import '../../../auth/domain/user_model.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
+
+class ProfileScreen extends ConsumerWidget {
+  const ProfileScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final userAsync = ref.watch(currentUserModelProvider);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Profile')),
+      body: userAsync.when(
+        loading: () => const Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+        error: (e, _) => Center(
+          child: Text('Error: $e',
+              style: const TextStyle(color: AppColors.error)),
+        ),
+        data: (user) {
+          if (user == null) {
+            return const Center(
+              child: Text('No profile found',
+                  style: TextStyle(color: AppColors.textSecondary)),
+            );
+          }
+          return _ProfileForm(key: ValueKey(user.uid), user: user);
+        },
+      ),
+    );
+  }
+}
+
+class _ProfileForm extends ConsumerStatefulWidget {
+  final UserModel user;
+
+  const _ProfileForm({super.key, required this.user});
+
+  @override
+  ConsumerState<_ProfileForm> createState() => _ProfileFormState();
+}
+
+class _ProfileFormState extends ConsumerState<_ProfileForm> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _aboutController;
+  late final TextEditingController _ageController;
+  late String? _selectedGender;
+  late List<String> _selectedSports;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController =
+        TextEditingController(text: widget.user.name ?? '');
+    _aboutController =
+        TextEditingController(text: widget.user.about ?? '');
+    _ageController = TextEditingController(
+        text: widget.user.age?.toString() ?? '');
+    _selectedGender = widget.user.gender;
+    _selectedSports = List.from(widget.user.sports);
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _aboutController.dispose();
+    _ageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveProfile() async {
+    setState(() => _isLoading = true);
+    try {
+      final updated = widget.user.copyWith(
+        name: _nameController.text.trim(),
+        about: _aboutController.text.trim(),
+        age: int.tryParse(_ageController.text.trim()),
+        gender: _selectedGender,
+        sports: _selectedSports,
+      );
+      await ref.read(authRepositoryProvider).saveUser(updated);
+      ref.invalidate(currentUserModelProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Profile updated!'),
+            backgroundColor: AppColors.success,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final initials = widget.user.initials;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Save button row
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: _isLoading ? null : _saveProfile,
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: AppColors.primary,
+                        ),
+                      )
+                    : const Text(
+                        'Save',
+                        style: TextStyle(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
+                      ),
+              ),
+            ],
+          ),
+
+          // Avatar
+          Center(
+            child: Container(
+              width: 90,
+              height: 90,
+              decoration: const BoxDecoration(
+                color: AppColors.primary,
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: Text(
+                  initials,
+                  style: const TextStyle(
+                    color: Colors.black,
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Phone (non-editable)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 14),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceLight,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.cardBorder),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.phone_outlined,
+                    color: AppColors.textSecondary, size: 18),
+                const SizedBox(width: 10),
+                Text(
+                  widget.user.phone,
+                  style: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 15,
+                  ),
+                ),
+                const Spacer(),
+                const Icon(Icons.lock_outline,
+                    color: AppColors.textHint, size: 14),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Name
+          _SectionLabel(label: 'Name'),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _nameController,
+            style: const TextStyle(color: AppColors.textPrimary),
+            decoration:
+                const InputDecoration(hintText: 'Your name'),
+          ),
+          const SizedBox(height: 16),
+
+          // About
+          _SectionLabel(label: 'About You'),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _aboutController,
+            style: const TextStyle(color: AppColors.textPrimary),
+            maxLines: 3,
+            decoration: const InputDecoration(
+              hintText: 'Let others know about you...',
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Age
+          _SectionLabel(label: 'Age'),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: _ageController,
+            style: const TextStyle(color: AppColors.textPrimary),
+            keyboardType: TextInputType.number,
+            decoration:
+                const InputDecoration(hintText: 'Your age'),
+          ),
+          const SizedBox(height: 16),
+
+          // Gender
+          _SectionLabel(label: 'Gender (optional)'),
+          const SizedBox(height: 8),
+          Row(
+            children: ['Male', 'Female', 'Other'].map((g) {
+              final isSelected = _selectedGender == g;
+              return Expanded(
+                child: GestureDetector(
+                  onTap: () => setState(() =>
+                      _selectedGender = isSelected ? null : g),
+                  child: Container(
+                    margin: EdgeInsets.only(
+                        right: g != 'Other' ? 8 : 0),
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? AppColors.primary
+                          : AppColors.surface,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: isSelected
+                            ? AppColors.primary
+                            : AppColors.cardBorder,
+                      ),
+                    ),
+                    child: Text(
+                      g,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: isSelected
+                            ? Colors.black
+                            : AppColors.textSecondary,
+                        fontWeight: isSelected
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 24),
+
+          // My Sports
+          _SectionLabel(label: 'My Sports'),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: AppConstants.sports.map((sport) {
+              final isSelected = _selectedSports.contains(sport);
+              return GestureDetector(
+                onTap: () {
+                  setState(() {
+                    if (isSelected) {
+                      _selectedSports.remove(sport);
+                    } else {
+                      _selectedSports.add(sport);
+                    }
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isSelected
+                        ? AppColors.primary
+                        : AppColors.surface,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: isSelected
+                          ? AppColors.primary
+                          : AppColors.cardBorder,
+                    ),
+                  ),
+                  child: Text(
+                    sport,
+                    style: TextStyle(
+                      color: isSelected
+                          ? Colors.black
+                          : AppColors.textSecondary,
+                      fontWeight: isSelected
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 24),
+
+          // Member Since
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.cardBorder),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.calendar_today_outlined,
+                    color: AppColors.textSecondary, size: 16),
+                const SizedBox(width: 8),
+                const Text(
+                  'Member since ',
+                  style: TextStyle(
+                      color: AppColors.textSecondary, fontSize: 13),
+                ),
+                Text(
+                  '${widget.user.createdAt.day}/${widget.user.createdAt.month}/${widget.user.createdAt.year}',
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Delete Account
+          OutlinedButton(
+            onPressed: () {
+              showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  backgroundColor: AppColors.surface,
+                  title: const Text('Delete Account',
+                      style:
+                          TextStyle(color: AppColors.textPrimary)),
+                  content: const Text(
+                    'This feature is coming soon.',
+                    style:
+                        TextStyle(color: AppColors.textSecondary),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('OK',
+                          style:
+                              TextStyle(color: AppColors.primary)),
+                    ),
+                  ],
+                ),
+              );
+            },
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 52),
+              side: const BorderSide(color: AppColors.error),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text(
+              'Delete Account',
+              style: TextStyle(
+                color: AppColors.error,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionLabel extends StatelessWidget {
+  final String label;
+  const _SectionLabel({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      label,
+      style: const TextStyle(
+        color: AppColors.textPrimary,
+        fontSize: 15,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+}
+```
+
+---
+
+## `lib/features/profile/presentation/screens/your_games_screen.dart`
+
+Fix 3 — only hosted games here, no joined games.
+Fix 4 — removed star and tick icons from badges.
+
+```dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../home/domain/game_model.dart';
+import '../../../home/presentation/widgets/game_card.dart';
+
+class YourGamesScreen extends ConsumerWidget {
+  const YourGamesScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Your Games')),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('games')
+            .where('hostId', isEqualTo: uid)
+            .orderBy('dateTime')
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child:
+                  CircularProgressIndicator(color: AppColors.primary),
+            );
+          }
+          final games = snapshot.data?.docs
+                  .map((d) => GameModel.fromMap(
+                      d.data() as Map<String, dynamic>))
+                  .toList() ??
+              [];
+
+          if (games.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('🏅',
+                      style: TextStyle(fontSize: 48)),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "You haven't hosted any games yet",
+                    style: TextStyle(
+                        color: AppColors.textSecondary),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 40),
+                    child: ElevatedButton(
+                      onPressed: () =>
+                          context.push('/create-game'),
+                      child: const Text('Host a Game'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: games.length,
+            itemBuilder: (context, index) => GameCard(
+              game: games[index],
+              onTap: () =>
+                  context.push('/game/${games[index].id}'),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+```
+
+---
+
+## `lib/features/profile/presentation/screens/joined_games_screen.dart`
+
+Fix 4 applied here too.
+
+```dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../home/domain/game_model.dart';
+import '../../../home/presentation/widgets/game_card.dart';
+
+class JoinedGamesScreen extends ConsumerWidget {
+  const JoinedGamesScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Joined Games')),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('games')
+            .where('joinedPlayerIds', arrayContains: uid)
+            .orderBy('dateTime')
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child:
+                  CircularProgressIndicator(color: AppColors.primary),
+            );
+          }
+          final games = snapshot.data?.docs
+                  .map((d) => GameModel.fromMap(
+                      d.data() as Map<String, dynamic>))
+                  .where((g) => g.hostId != uid)
+                  .toList() ??
+              [];
+
+          if (games.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('🏅',
+                      style: TextStyle(fontSize: 48)),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "You haven't joined any games yet",
+                    style: TextStyle(
+                        color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 24),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 40),
+                    child: ElevatedButton(
+                      onPressed: () => context.go('/home'),
+                      child: const Text('Find a Game'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: games.length,
+            itemBuilder: (context, index) => GameCard(
+              game: games[index],
+              onTap: () =>
+                  context.push('/game/${games[index].id}'),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+```
+
+---
+
+## `lib/features/profile/presentation/screens/starred_games_screen.dart` (NEW FILE)
+
+Fix 5 — Starred Games screen.
+
+```dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
+import '../../../home/domain/game_model.dart';
+import '../../../home/presentation/widgets/game_card.dart';
+
+class StarredGamesScreen extends ConsumerWidget {
+  const StarredGamesScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final userAsync = ref.watch(currentUserModelProvider);
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Starred Games')),
+      body: userAsync.when(
+        loading: () => const Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
+        error: (e, _) => Center(
+          child: Text('Error: $e',
+              style: const TextStyle(color: AppColors.error)),
+        ),
+        data: (user) {
+          if (user == null || user.starredGameIds.isEmpty) {
+            return const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('⭐', style: TextStyle(fontSize: 48)),
+                  SizedBox(height: 16),
+                  Text(
+                    'No starred games yet',
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'Star a game from its detail page\nto find it quickly later',
+                    style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 14),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('games')
+                .where(FieldPath.documentId,
+                    whereIn: user.starredGameIds)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState ==
+                  ConnectionState.waiting) {
+                return const Center(
+                  child: CircularProgressIndicator(
+                      color: AppColors.primary),
+                );
+              }
+              final games = snapshot.data?.docs
+                      .map((d) => GameModel.fromMap(
+                          d.data() as Map<String, dynamic>))
+                      .toList() ??
+                  [];
+
+              if (games.isEmpty) {
+                return const Center(
+                  child: Text(
+                    'Starred games no longer available',
+                    style:
+                        TextStyle(color: AppColors.textSecondary),
+                  ),
+                );
+              }
+
+              return ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: games.length,
+                itemBuilder: (context, index) => GameCard(
+                  game: games[index],
+                  onTap: () =>
+                      context.push('/game/${games[index].id}'),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+```
+
+---
+
+## `lib/features/game/presentation/screens/game_detail_screen.dart`
+
+Fix 6 (star button), Fix 7 (time conflict on edit), Fix 8 (host label in chat players list).
+
+```dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../auth/data/auth_repository.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
+import '../../../home/domain/game_model.dart';
+import 'create_game_screen.dart';
+import '../../data/game_repository.dart';
+
+final gameStreamProvider =
+    StreamProvider.family<GameModel, String>((ref, gameId) {
+  return ref.watch(createGameRepositoryProvider).getGameStream(gameId);
+});
+
+class GameDetailScreen extends ConsumerWidget {
+  final String gameId;
+
+  const GameDetailScreen({super.key, required this.gameId});
+
+  Color _skillColor(String level) {
+    switch (level) {
+      case 'Beginner':
+        return const Color(0xFF4CAF50);
+      case 'Intermediate':
+        return const Color(0xFFFF9800);
+      case 'Advanced':
+        return const Color(0xFFF44336);
+      default:
+        return AppColors.textSecondary;
+    }
+  }
+
+  String _emojiForSport(String sport) {
+    const emojis = {
+      'Badminton': '🏸',
+      'Cricket': '🏏',
+      'Football': '⚽',
+      'Tennis': '🎾',
+      'Basketball': '🏀',
+      'Volleyball': '🏐',
+      'Swimming': '🏊',
+      'Table Tennis': '🏓',
+      'Cycling': '🚴',
+      'Running': '🏃',
+    };
+    return emojis[sport] ?? '🏅';
+  }
+
+  Future<void> _toggleStar(
+      WidgetRef ref, String gameId, bool isStarred) async {
+    final user = ref.read(authRepositoryProvider).currentUser;
+    if (user == null) return;
+    final userDoc = FirebaseFirestore.instance
+        .collection('users')
+        .doc(user.uid);
+    if (isStarred) {
+      await userDoc.update({
+        'starredGameIds': FieldValue.arrayRemove([gameId]),
+      });
+    } else {
+      await userDoc.update({
+        'starredGameIds': FieldValue.arrayUnion([gameId]),
+      });
+    }
+    ref.invalidate(currentUserModelProvider);
+  }
+
+  Future<void> _editTime(BuildContext context, WidgetRef ref,
+      GameModel game, String userId) async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(game.dateTime),
+      builder: (context, child) => Theme(
+        data: Theme.of(context).copyWith(
+          colorScheme: const ColorScheme.dark(
+            primary: AppColors.primary,
+            surface: AppColors.surface,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked != null) {
+      final newDateTime = DateTime(
+        game.dateTime.year,
+        game.dateTime.month,
+        game.dateTime.day,
+        picked.hour,
+        picked.minute,
+      );
+
+      // Fix 7 — check conflict before saving
+      final conflict = await ref
+          .read(createGameRepositoryProvider)
+          .checkConflict(
+            userId: userId,
+            dateTime: newDateTime,
+            excludeGameId: game.id,
+          );
+
+      if (conflict != null) {
+        if (context.mounted) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              backgroundColor: AppColors.surface,
+              title: const Text('Time Conflict',
+                  style:
+                      TextStyle(color: AppColors.textPrimary)),
+              content: Text(
+                'This time overlaps with ${conflict.sport} at ${conflict.venue}.',
+                style: const TextStyle(
+                    color: AppColors.textSecondary),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('OK',
+                      style:
+                          TextStyle(color: AppColors.primary)),
+                ),
+              ],
+            ),
+          );
+        }
+        return;
+      }
+
+      await FirebaseFirestore.instance
+          .collection('games')
+          .doc(game.id)
+          .update({'dateTime': newDateTime.toIso8601String()});
+    }
+  }
+
+  Future<void> _editNotes(
+      BuildContext context, GameModel game) async {
+    final controller =
+        TextEditingController(text: game.notes ?? '');
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Edit Notes',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: TextField(
+          controller: controller,
+          style: const TextStyle(color: AppColors.textPrimary),
+          maxLines: 3,
+          decoration: const InputDecoration(
+            hintText: 'Add notes...',
+            hintStyle: TextStyle(color: AppColors.textHint),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel',
+                style:
+                    TextStyle(color: AppColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () async {
+              await FirebaseFirestore.instance
+                  .collection('games')
+                  .doc(game.id)
+                  .update({'notes': controller.text.trim()});
+              if (ctx.mounted) Navigator.pop(ctx);
+            },
+            child: const Text('Save',
+                style: TextStyle(color: AppColors.primary)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showNoEditWarning(
+      BuildContext context, String field) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: Text('Cannot edit $field',
+            style: const TextStyle(
+                color: AppColors.textPrimary)),
+        content: Text(
+          '$field cannot be changed after a game is created to avoid confusion for players who have already joined.',
+          style: const TextStyle(
+              color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Got it',
+                style:
+                    TextStyle(color: AppColors.primary)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPlayersList(BuildContext context, GameModel game,
+      String? currentUid, bool canView) {
+    if (!canView) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          content: const Text(
+            'Join the game to see who else is playing.',
+            style: TextStyle(
+                color: AppColors.textSecondary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('OK',
+                  style:
+                      TextStyle(color: AppColors.primary)),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius:
+            BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${game.playersJoined} Player${game.playersJoined == 1 ? '' : 's'} Joined',
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            ...game.joinedPlayerIds.map((uid) => Padding(
+                  padding:
+                      const EdgeInsets.only(bottom: 12),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 20,
+                        backgroundColor:
+                            AppColors.surfaceLight,
+                        child: Text(
+                          uid == game.hostId ? '👑' : '🏅',
+                          style: const TextStyle(
+                              fontSize: 16),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Text(
+                        uid == game.hostId
+                            ? '${game.hostName} (Host)'
+                            : uid == currentUid
+                                ? 'You'
+                                : 'Player',
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ],
+                  ),
+                )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final gameAsync = ref.watch(gameStreamProvider(gameId));
+    final currentUser =
+        ref.watch(authRepositoryProvider).currentUser;
+    final userAsync = ref.watch(currentUserModelProvider);
+
+    return gameAsync.when(
+      loading: () => const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(
+              color: AppColors.primary),
+        ),
+      ),
+      error: (e, _) => Scaffold(
+        appBar: AppBar(),
+        body: Center(
+          child: Text('Error: $e',
+              style:
+                  const TextStyle(color: AppColors.error)),
+        ),
+      ),
+      data: (game) {
+        final isJoined = currentUser != null &&
+            game.joinedPlayerIds.contains(currentUser.uid);
+        final isHost = currentUser?.uid == game.hostId;
+        final canJoin =
+            !game.isFull && !isJoined && !isHost;
+        final canViewPlayers = isJoined || isHost;
+
+        final starredIds = userAsync.value?.starredGameIds ?? [];
+        final isStarred = starredIds.contains(game.id);
+
+        return Scaffold(
+          appBar: AppBar(
+            leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () => context.pop(),
+            ),
+            title: Text(game.sport),
+            actions: [
+              // Star button — Fix 6
+              IconButton(
+                icon: Icon(
+                  isStarred ? Icons.star : Icons.star_border,
+                  color: isStarred
+                      ? const Color(0xFFFFB300)
+                      : AppColors.textSecondary,
+                ),
+                onPressed: () =>
+                    _toggleStar(ref, game.id, isStarred),
+              ),
+              if (isHost)
+                Container(
+                  margin: const EdgeInsets.only(right: 16),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color:
+                        AppColors.primary.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.star,
+                          color: AppColors.primary,
+                          size: 14),
+                      SizedBox(width: 4),
+                      Text(
+                        'Host',
+                        style: TextStyle(
+                          color: AppColors.primary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Hero section
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(24),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(20),
+                    border:
+                        Border.all(color: AppColors.cardBorder),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        _emojiForSport(game.sport),
+                        style:
+                            const TextStyle(fontSize: 64),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        game.sport,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 28,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: _skillColor(game.skillLevel)
+                              .withOpacity(0.15),
+                          borderRadius:
+                              BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          game.skillLevel,
+                          style: TextStyle(
+                            color:
+                                _skillColor(game.skillLevel),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Info section
+                _InfoRow(
+                  icon: Icons.person_outline,
+                  label: 'Host',
+                  value: game.hostName,
+                ),
+                GestureDetector(
+                  onTap: isHost
+                      ? () => _showNoEditWarning(
+                          context, 'Venue')
+                      : null,
+                  child: _InfoRow(
+                    icon: Icons.location_on_outlined,
+                    label: 'Venue',
+                    value: game.venue,
+                    isEditable: false,
+                    isHost: isHost,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: isHost
+                      ? () => _showNoEditWarning(
+                          context, 'Date')
+                      : null,
+                  child: _InfoRow(
+                    icon: Icons.calendar_today_outlined,
+                    label: 'Date',
+                    value: DateFormat('EEEE, MMMM d')
+                        .format(game.dateTime),
+                    isEditable: false,
+                    isHost: isHost,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: isHost
+                      ? () => _editTime(context, ref, game,
+                          currentUser!.uid)
+                      : null,
+                  child: _InfoRow(
+                    icon: Icons.access_time,
+                    label: 'Time',
+                    value: DateFormat('h:mm a')
+                        .format(game.dateTime),
+                    isEditable: isHost,
+                    isHost: isHost,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: isHost
+                      ? () => _editNotes(context, game)
+                      : null,
+                  child: _InfoRow(
+                    icon: Icons.notes_outlined,
+                    label: 'Notes',
+                    value: game.notes != null &&
+                            game.notes!.isNotEmpty
+                        ? game.notes!
+                        : isHost
+                            ? 'Tap to add notes'
+                            : 'No notes',
+                    isEditable: isHost,
+                    isHost: isHost,
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Players section
+                const Text(
+                  'Players',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius:
+                            BorderRadius.circular(4),
+                        child: LinearProgressIndicator(
+                          value: game.playersJoined /
+                              game.totalPlayersNeeded,
+                          backgroundColor:
+                              AppColors.surfaceLight,
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(
+                            game.isFull
+                                ? AppColors.error
+                                : AppColors.primary,
+                          ),
+                          minHeight: 8,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      '${game.playersJoined}/${game.totalPlayersNeeded} joined',
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  game.isFull
+                      ? 'Game is full'
+                      : '${game.spotsLeft} spot${game.spotsLeft == 1 ? '' : 's'} left',
+                  style: TextStyle(
+                    color: game.isFull
+                        ? AppColors.error
+                        : AppColors.textSecondary,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 24),
+
+                // Players list button
+                Opacity(
+                  opacity: canViewPlayers ? 1.0 : 0.4,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _showPlayersList(
+                        context,
+                        game,
+                        currentUser?.uid,
+                        canViewPlayers),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.surfaceLight,
+                      foregroundColor: AppColors.textPrimary,
+                      minimumSize:
+                          const Size(double.infinity, 52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon:
+                        const Icon(Icons.people_outline),
+                    label: Text(
+                        '${game.playersJoined}/${game.totalPlayersNeeded} Joined — View Players'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // Chat button
+                Opacity(
+                  opacity: canViewPlayers ? 1.0 : 0.4,
+                  child: ElevatedButton.icon(
+                    onPressed: canViewPlayers
+                        ? () => context.push(
+                              '/chat/${game.id}?name=${Uri.encodeComponent(game.sport)}',
+                            )
+                        : () => showDialog(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor:
+                                    AppColors.surface,
+                                content: const Text(
+                                  'Join the game to access the group chat.',
+                                  style: TextStyle(
+                                      color: AppColors
+                                          .textSecondary),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.pop(ctx),
+                                    child: const Text('OK',
+                                        style: TextStyle(
+                                            color: AppColors
+                                                .primary)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.surfaceLight,
+                      foregroundColor: AppColors.textPrimary,
+                      minimumSize:
+                          const Size(double.infinity, 52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(12),
+                      ),
+                    ),
+                    icon: const Icon(
+                        Icons.chat_bubble_outline),
+                    label:
+                        const Text('Group Chat'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // Join / Leave button
+                if (!isHost) ...[
+                  if (isJoined)
+                    OutlinedButton(
+                      onPressed: () async {
+                        await ref
+                            .read(
+                                createGameRepositoryProvider)
+                            .leaveGame(
+                              gameId: game.id,
+                              userId: currentUser!.uid,
+                            );
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context)
+                              .showSnackBar(
+                            const SnackBar(
+                              content:
+                                  Text('You left the game'),
+                              backgroundColor:
+                                  AppColors.error,
+                            ),
+                          );
+                        }
+                      },
+                      style: OutlinedButton.styleFrom(
+                        minimumSize:
+                            const Size(double.infinity, 52),
+                        side: const BorderSide(
+                            color: AppColors.error),
+                        shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Leave Game',
+                        style: TextStyle(
+                          color: AppColors.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    )
+                  else
+                    ElevatedButton(
+                      onPressed: canJoin
+                          ? () async {
+                              final error = await ref
+                                  .read(
+                                      createGameRepositoryProvider)
+                                  .joinGame(
+                                    gameId: game.id,
+                                    userId: currentUser!.uid,
+                                    gameDateTime:
+                                        game.dateTime,
+                                  );
+                              if (context.mounted) {
+                                if (error != null) {
+                                  showDialog(
+                                    context: context,
+                                    builder: (ctx) =>
+                                        AlertDialog(
+                                      backgroundColor:
+                                          AppColors.surface,
+                                      content: Text(
+                                        error,
+                                        style: const TextStyle(
+                                            color: AppColors
+                                                .textSecondary),
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(
+                                                  ctx),
+                                          child: const Text(
+                                              'OK',
+                                              style: TextStyle(
+                                                  color: AppColors
+                                                      .primary)),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                } else {
+                                  ScaffoldMessenger.of(
+                                          context)
+                                      .showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          "You've joined the game! 🎉"),
+                                      backgroundColor:
+                                          AppColors.success,
+                                    ),
+                                  );
+                                }
+                              }
+                            }
+                          : null,
+                      child: Text(game.isFull
+                          ? 'Game Full'
+                          : 'Join Game'),
+                    ),
+                ],
+
+                // Cancel game button for host
+                if (isHost)
+                  ElevatedButton(
+                    onPressed: () async {
+                      final confirm =
+                          await showDialog<bool>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          backgroundColor: AppColors.surface,
+                          title: const Text(
+                            'Cancel Game?',
+                            style: TextStyle(
+                                color:
+                                    AppColors.textPrimary),
+                          ),
+                          content: const Text(
+                            'This will permanently delete the game for all players.',
+                            style: TextStyle(
+                                color: AppColors
+                                    .textSecondary),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.pop(ctx, false),
+                              child: const Text(
+                                  'Keep Game',
+                                  style: TextStyle(
+                                      color: AppColors
+                                          .textSecondary)),
+                            ),
+                            TextButton(
+                              onPressed: () =>
+                                  Navigator.pop(ctx, true),
+                              child: const Text(
+                                  'Cancel Game',
+                                  style: TextStyle(
+                                      color:
+                                          AppColors.error)),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (confirm == true) {
+                        await FirebaseFirestore.instance
+                            .collection('games')
+                            .doc(game.id)
+                            .delete();
+                        if (context.mounted)
+                          context.go('/home');
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.error,
+                      minimumSize:
+                          const Size(double.infinity, 52),
+                      shape: RoundedRectangleBorder(
+                        borderRadius:
+                            BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Cancel Game',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool isEditable;
+  final bool isHost;
+
+  const _InfoRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.isEditable = false,
+    this.isHost = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: AppColors.primary, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ),
+                    if (isHost && isEditable) ...[
+                      const SizedBox(width: 4),
+                      const Icon(Icons.edit,
+                          color: AppColors.primary,
+                          size: 12),
+                    ],
+                    if (isHost &&
+                        !isEditable &&
+                        label != 'Host') ...[
+                      const SizedBox(width: 4),
+                      const Icon(Icons.lock_outline,
+                          color: AppColors.textHint,
+                          size: 12),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+---
+
+## `lib/features/game/data/game_repository.dart`
+
+Added `checkConflict` method for Fix 7.
+
+```dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:uuid/uuid.dart';
+import '../../home/domain/game_model.dart';
+
+class CreateGameRepository {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final _uuid = const Uuid();
+
+  Future<GameModel?> _getConflictingGame({
+    required String userId,
+    required DateTime dateTime,
+    String? excludeGameId,
+  }) async {
+    final start = dateTime;
+    final end = dateTime.add(const Duration(hours: 2));
+
+    final snapshot = await _firestore
+        .collection('games')
+        .where('joinedPlayerIds', arrayContains: userId)
+        .get();
+
+    for (final doc in snapshot.docs) {
+      final game = GameModel.fromMap(doc.data());
+      if (excludeGameId != null && game.id == excludeGameId)
+        continue;
+      final gameStart = game.dateTime;
+      final gameEnd =
+          game.dateTime.add(const Duration(hours: 2));
+      if (start.isBefore(gameEnd) && end.isAfter(gameStart)) {
+        return game;
+      }
+    }
+    return null;
+  }
+
+  // Public method for checking conflicts (used in edit time)
+  Future<GameModel?> checkConflict({
+    required String userId,
+    required DateTime dateTime,
+    String? excludeGameId,
+  }) async {
+    return _getConflictingGame(
+      userId: userId,
+      dateTime: dateTime,
+      excludeGameId: excludeGameId,
+    );
+  }
+
+  Future<String?> createGame({
+    required String hostId,
+    required String hostName,
+    required String sport,
+    required String venue,
+    required DateTime dateTime,
+    required int totalPlayersNeeded,
+    required String skillLevel,
+    String? notes,
+  }) async {
+    final conflict = await _getConflictingGame(
+      userId: hostId,
+      dateTime: dateTime,
+    );
+    if (conflict != null) {
+      return 'You already have a game (${conflict.sport} at ${conflict.venue}) at this time. Choose a different time.';
+    }
+
+    final id = _uuid.v4();
+    final game = GameModel(
+      id: id,
+      hostId: hostId,
+      hostName: hostName,
+      sport: sport,
+      venue: venue,
+      dateTime: dateTime,
+      totalPlayersNeeded: totalPlayersNeeded,
+      joinedPlayerIds: [hostId],
+      skillLevel: skillLevel,
+      notes: notes,
+      createdAt: DateTime.now(),
+    );
+    await _firestore
+        .collection('games')
+        .doc(id)
+        .set(game.toMap());
+    return null;
+  }
+
+  Future<String?> joinGame({
+    required String gameId,
+    required String userId,
+    required DateTime gameDateTime,
+  }) async {
+    final conflict = await _getConflictingGame(
+      userId: userId,
+      dateTime: gameDateTime,
+      excludeGameId: gameId,
+    );
+    if (conflict != null) {
+      return 'You are already playing ${conflict.sport} at ${conflict.venue} at this time.';
+    }
+    await _firestore
+        .collection('games')
+        .doc(gameId)
+        .update({
+      'joinedPlayerIds': FieldValue.arrayUnion([userId]),
+    });
+    return null;
+  }
+
+  Future<void> leaveGame({
+    required String gameId,
+    required String userId,
+  }) async {
+    await _firestore
+        .collection('games')
+        .doc(gameId)
+        .update({
+      'joinedPlayerIds': FieldValue.arrayRemove([userId]),
+    });
+  }
+
+  Stream<GameModel> getGameStream(String gameId) {
+    return _firestore
+        .collection('games')
+        .doc(gameId)
+        .snapshots()
+        .map((doc) => GameModel.fromMap(doc.data()!));
+  }
+}
+```
+
+---
+
+## `lib/features/chat/presentation/screens/chat_screen.dart`
+
+Fix 8 — show (Host) badge next to host name in chat.
+
+```dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../auth/data/auth_repository.dart';
+import '../../../auth/presentation/controllers/auth_controller.dart';
+import '../../data/chat_repository.dart';
+import '../../domain/message_model.dart';
+
+final chatRepositoryProvider = Provider<ChatRepository>((ref) {
+  return ChatRepository();
+});
+
+final messagesProvider =
+    StreamProvider.family<List<MessageModel>, String>(
+        (ref, gameId) {
+  return ref.watch(chatRepositoryProvider).getMessages(gameId);
+});
+
+class ChatScreen extends ConsumerStatefulWidget {
+  final String gameId;
+  final String gameName;
+
+  const ChatScreen(
+      {super.key, required this.gameId, required this.gameName});
+
+  @override
+  ConsumerState<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends ConsumerState<ChatScreen> {
+  final _messageController = TextEditingController();
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _messageController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Future<void> _sendMessage() async {
+    final text = _messageController.text.trim();
+    if (text.isEmpty) return;
+    _messageController.clear();
+    final user = ref.read(authRepositoryProvider).currentUser;
+    if (user == null) return;
+    final userModel =
+        await ref.read(authRepositoryProvider).getUser(user.uid);
+    await ref.read(chatRepositoryProvider).sendMessage(
+          gameId: widget.gameId,
+          senderId: user.uid,
+          senderName: userModel?.name ?? 'Anonymous',
+          text: text,
+        );
+    _scrollToBottom();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final messagesAsync =
+        ref.watch(messagesProvider(widget.gameId));
+    final currentUser =
+        ref.watch(authRepositoryProvider).currentUser;
+
+    // Get host ID from game stream
+    final hostId = ref
+        .watch(chatRepositoryProvider)
+        .getHostId(widget.gameId);
+
+    return Scaffold(
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.pop(),
+        ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.gameName),
+            const Text(
+              'Group Chat',
+              style: TextStyle(
+                fontSize: 12,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: messagesAsync.when(
+              loading: () => const Center(
+                child: CircularProgressIndicator(
+                    color: AppColors.primary),
+              ),
+              error: (e, _) => Center(
+                child: Text('Error: $e',
+                    style: const TextStyle(
+                        color: AppColors.error)),
+              ),
+              data: (messages) {
+                if (messages.isEmpty) {
+                  return const Center(
+                    child: Column(
+                      mainAxisAlignment:
+                          MainAxisAlignment.center,
+                      children: [
+                        Text('💬',
+                            style:
+                                TextStyle(fontSize: 48)),
+                        SizedBox(height: 16),
+                        Text(
+                          'No messages yet',
+                          style: TextStyle(
+                              color:
+                                  AppColors.textSecondary),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'Be the first to say something!',
+                          style: TextStyle(
+                              color: AppColors.textHint),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                _scrollToBottom();
+                return FutureBuilder<String?>(
+                  future: hostId,
+                  builder: (context, hostSnapshot) {
+                    final hostUid = hostSnapshot.data;
+                    return ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.all(16),
+                      itemCount: messages.length,
+                      itemBuilder: (context, index) {
+                        final message = messages[index];
+                        final isMe = message.senderId ==
+                            currentUser?.uid;
+                        final isHost =
+                            message.senderId == hostUid;
+                        return _MessageBubble(
+                          message: message,
+                          isMe: isMe,
+                          isHost: isHost,
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          _MessageInput(
+            controller: _messageController,
+            onSend: _sendMessage,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessageBubble extends StatelessWidget {
+  final MessageModel message;
+  final bool isMe;
+  final bool isHost;
+
+  const _MessageBubble({
+    required this.message,
+    required this.isMe,
+    required this.isHost,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisAlignment: isMe
+            ? MainAxisAlignment.end
+            : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          if (!isMe) ...[
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: AppColors.surfaceLight,
+              child: Text(
+                message.senderName.isNotEmpty
+                    ? message.senderName[0].toUpperCase()
+                    : '?',
+                style: const TextStyle(
+                  color: AppColors.primary,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Flexible(
+            child: Column(
+              crossAxisAlignment: isMe
+                  ? CrossAxisAlignment.end
+                  : CrossAxisAlignment.start,
+              children: [
+                if (!isMe)
+                  Padding(
+                    padding:
+                        const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          message.senderName,
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                          ),
+                        ),
+                        if (isHost) ...[
+                          const SizedBox(width: 4),
+                          Container(
+                            padding:
+                                const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.primary
+                                  .withOpacity(0.15),
+                              borderRadius:
+                                  BorderRadius.circular(8),
+                            ),
+                            child: const Text(
+                              'Host',
+                              style: TextStyle(
+                                color: AppColors.primary,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isMe
+                        ? AppColors.primary
+                        : AppColors.surface,
+                    borderRadius: BorderRadius.only(
+                      topLeft:
+                          const Radius.circular(16),
+                      topRight:
+                          const Radius.circular(16),
+                      bottomLeft:
+                          Radius.circular(isMe ? 16 : 4),
+                      bottomRight:
+                          Radius.circular(isMe ? 4 : 16),
+                    ),
+                    border: isMe
+                        ? null
+                        : Border.all(
+                            color: AppColors.cardBorder),
+                  ),
+                  child: Text(
+                    message.text,
+                    style: TextStyle(
+                      color: isMe
+                          ? Colors.black
+                          : AppColors.textPrimary,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (isMe) const SizedBox(width: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessageInput extends StatelessWidget {
+  final TextEditingController controller;
+  final VoidCallback onSend;
+
+  const _MessageInput(
+      {required this.controller, required this.onSend});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+          horizontal: 16, vertical: 12),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border:
+            Border(top: BorderSide(color: AppColors.divider)),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: controller,
+              style: const TextStyle(
+                  color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'Type a message...',
+                hintStyle: const TextStyle(
+                    color: AppColors.textHint),
+                filled: true,
+                fillColor: AppColors.surfaceLight,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              onSubmitted: (_) => onSend(),
+            ),
+          ),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: onSend,
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: const BoxDecoration(
+                color: AppColors.primary,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.send,
+                  color: Colors.black, size: 20),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+---
+
+## `lib/features/chat/data/chat_repository.dart`
+
+Added `getHostId` method for Fix 8.
+
+```dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:uuid/uuid.dart';
+import '../domain/message_model.dart';
+
+class ChatRepository {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final _uuid = const Uuid();
+
+  Stream<List<MessageModel>> getMessages(String gameId) {
+    return _firestore
+        .collection('games')
+        .doc(gameId)
+        .collection('messages')
+        .orderBy('createdAt')
+        .snapshots()
+        .map((snap) => snap.docs
+            .map((d) => MessageModel.fromMap(d.data()))
+            .toList());
+  }
+
+  Future<String?> getHostId(String gameId) async {
+    final doc = await _firestore
+        .collection('games')
+        .doc(gameId)
+        .get();
+    return doc.data()?['hostId'] as String?;
+  }
+
+  Future<void> sendMessage({
+    required String gameId,
+    required String senderId,
+    required String senderName,
+    required String text,
+  }) async {
+    final id = _uuid.v4();
+    final message = MessageModel(
+      id: id,
+      senderId: senderId,
+      senderName: senderName,
+      text: text,
+      createdAt: DateTime.now(),
+    );
+    await _firestore
+        .collection('games')
+        .doc(gameId)
+        .collection('messages')
+        .doc(id)
+        .set(message.toMap());
+  }
+}
+```
+
+---
+
+## `lib/core/router/app_router.dart`
+
+Add starred games route.
+
+```dart
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:flutter/material.dart';
+import '../../features/auth/presentation/controllers/auth_controller.dart';
+import '../../features/auth/presentation/screens/otp_screen.dart';
+import '../../features/auth/presentation/screens/phone_input_screen.dart';
+import '../../features/auth/presentation/screens/profile_setup_screen.dart';
+import '../../features/chat/presentation/screens/all_chats_screen.dart';
+import '../../features/chat/presentation/screens/chat_screen.dart';
+import '../../features/game/presentation/screens/create_game_screen.dart';
+import '../../features/game/presentation/screens/game_detail_screen.dart';
+import '../../features/home/presentation/screens/home_screen.dart';
+import '../../features/profile/presentation/screens/joined_games_screen.dart';
+import '../../features/profile/presentation/screens/profile_screen.dart';
+import '../../features/profile/presentation/screens/starred_games_screen.dart';
+import '../../features/profile/presentation/screens/your_games_screen.dart';
+
+final routerProvider = Provider<GoRouter>((ref) {
+  final authState = ref.watch(authStateProvider);
+  return GoRouter(
+    initialLocation: '/',
+    redirect: (context, state) {
+      final isLoggedIn = authState.value != null;
+      final isOnAuth = state.matchedLocation == '/' ||
+          state.matchedLocation == '/otp';
+      if (isLoggedIn && isOnAuth) return '/home';
+      return null;
+    },
+    routes: [
+      GoRoute(
+        path: '/',
+        builder: (context, state) => const PhoneInputScreen(),
+      ),
+      GoRoute(
+        path: '/otp',
+        builder: (context, state) => const OtpScreen(),
+      ),
+      GoRoute(
+        path: '/profile-setup',
+        builder: (context, state) =>
+            const ProfileSetupScreen(),
+      ),
+      GoRoute(
+        path: '/home',
+        builder: (context, state) => const HomeScreen(),
+      ),
+      GoRoute(
+        path: '/create-game',
+        builder: (context, state) =>
+            const CreateGameScreen(),
+      ),
+      GoRoute(
+        path: '/game/:id',
+        builder: (context, state) => GameDetailScreen(
+          gameId: state.pathParameters['id']!,
+        ),
+      ),
+      GoRoute(
+        path: '/chat/:id',
+        builder: (context, state) => ChatScreen(
+          gameId: state.pathParameters['id']!,
+          gameName:
+              state.uri.queryParameters['name'] ?? 'Game',
+        ),
+      ),
+      GoRoute(
+        path: '/chats',
+        builder: (context, state) => const AllChatsScreen(),
+      ),
+      GoRoute(
+        path: '/profile',
+        builder: (context, state) => const ProfileScreen(),
+      ),
+      GoRoute(
+        path: '/your-games',
+        builder: (context, state) => const YourGamesScreen(),
+      ),
+      GoRoute(
+        path: '/joined-games',
+        builder: (context, state) =>
+            const JoinedGamesScreen(),
+      ),
+      GoRoute(
+        path: '/starred-games',
+        builder: (context, state) =>
+            const StarredGamesScreen(),
+      ),
+    ],
+  );
+});
+```
+
+---
+
+## `lib/features/home/presentation/screens/home_screen.dart`
+
+Add Starred Games to drawer menu.
+
+```dart
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../../core/constants/app_constants.dart';
+import '../../data/game_repository.dart';
+import '../controllers/home_controller.dart';
+import '../widgets/game_card.dart';
+
+class HomeScreen extends ConsumerStatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  ConsumerState<HomeScreen> createState() =>
+      _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen> {
+  final GlobalKey<ScaffoldState> _scaffoldKey =
+      GlobalKey<ScaffoldState>();
+
+  @override
+  void initState() {
+    super.initState();
+    Future.microtask(() =>
+        ref.read(gameRepositoryProvider).seedSampleGames());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredGames = ref.watch(filteredGamesProvider);
+    final selectedSport =
+        ref.watch(selectedSportFilterProvider);
+
+    final isAllFilter = selectedSport == null;
+    final isEmpty = filteredGames.value?.isEmpty ?? false;
+    final showExtended = !isAllFilter || isEmpty;
+
+    return Scaffold(
+      key: _scaffoldKey,
+      drawer: const _AppDrawer(),
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.menu),
+          onPressed: () =>
+              _scaffoldKey.currentState?.openDrawer(),
+        ),
+        title: GestureDetector(
+          onTap: () => ref
+              .read(selectedSportFilterProvider.notifier)
+              .state = null,
+          child: const Text(
+            'Sporty 🏸',
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              color: AppColors.primary,
+            ),
+          ),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline),
+            onPressed: () => context.push('/chats'),
+          ),
+        ],
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Text(
+              'Games near you',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          SizedBox(
+            height: 44,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 16),
+              children: [
+                _FilterChip(
+                  label: 'All',
+                  isSelected: selectedSport == null,
+                  onTap: () => ref
+                      .read(
+                          selectedSportFilterProvider.notifier)
+                      .state = null,
+                ),
+                ...AppConstants.sports
+                    .map((sport) => _FilterChip(
+                          label: sport,
+                          isSelected: selectedSport == sport,
+                          onTap: () => ref
+                              .read(selectedSportFilterProvider
+                                  .notifier)
+                              .state = sport,
+                        )),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: filteredGames.when(
+              loading: () => const Center(
+                child: CircularProgressIndicator(
+                    color: AppColors.primary),
+              ),
+              error: (e, _) => Center(
+                child: Text(
+                  'Something went wrong\n$e',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      color: AppColors.error),
+                ),
+              ),
+              data: (games) {
+                if (games.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment:
+                          MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          _emojiForSport(selectedSport),
+                          style: const TextStyle(
+                              fontSize: 48),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          selectedSport == null
+                              ? 'No games found nearby'
+                              : 'No $selectedSport games found',
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Be the first to create one!',
+                          style: TextStyle(
+                            color: AppColors.textHint,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                return ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(
+                      16, 8, 16, 100),
+                  itemCount: games.length,
+                  itemBuilder: (context, index) {
+                    return GameCard(
+                      game: games[index],
+                      onTap: () => context
+                          .push('/game/${games[index].id}'),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+      floatingActionButton: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 300),
+        child: showExtended
+            ? FloatingActionButton.extended(
+                key: const ValueKey('extended'),
+                onPressed: () =>
+                    context.push('/create-game'),
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.black,
+                icon: const Icon(Icons.add),
+                label: const Text(
+                  'Create Game',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w600),
+                ),
+              )
+            : FloatingActionButton(
+                key: const ValueKey('collapsed'),
+                onPressed: () =>
+                    context.push('/create-game'),
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.black,
+                child: const Icon(Icons.add),
+              ),
+      ),
+    );
+  }
+
+  String _emojiForSport(String? sport) {
+    if (sport == null) return '🏅';
+    const emojis = {
+      'Badminton': '🏸',
+      'Cricket': '🏏',
+      'Football': '⚽',
+      'Tennis': '🎾',
+      'Basketball': '🏀',
+      'Volleyball': '🏐',
+      'Swimming': '🏊',
+      'Table Tennis': '🏓',
+      'Cycling': '🚴',
+      'Running': '🏃',
+    };
+    return emojis[sport] ?? '🏅';
+  }
+}
+
+class _AppDrawer extends ConsumerWidget {
+  const _AppDrawer();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Drawer(
+      backgroundColor: AppColors.surface,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.fromLTRB(24, 24, 24, 20),
+              decoration: const BoxDecoration(
+                border: Border(
+                    bottom:
+                        BorderSide(color: AppColors.divider)),
+              ),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Sporty 🏸',
+                    style: TextStyle(
+                      color: AppColors.primary,
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    'Find players. Play sports.',
+                    style: TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            _DrawerItem(
+              icon: Icons.person_outline,
+              label: 'Profile',
+              onTap: () {
+                Navigator.pop(context);
+                context.push('/profile');
+              },
+            ),
+            _DrawerItem(
+              icon: Icons.sports_outlined,
+              label: 'Your Games',
+              onTap: () {
+                Navigator.pop(context);
+                context.push('/your-games');
+              },
+            ),
+            _DrawerItem(
+              icon: Icons.group_outlined,
+              label: 'Joined Games',
+              onTap: () {
+                Navigator.pop(context);
+                context.push('/joined-games');
+              },
+            ),
+            _DrawerItem(
+              icon: Icons.star_border,
+              label: 'Starred Games',
+              onTap: () {
+                Navigator.pop(context);
+                context.push('/starred-games');
+              },
+            ),
+            _DrawerItem(
+              icon: Icons.share_outlined,
+              label: 'Invite Friends',
+              onTap: () {
+                Navigator.pop(context);
+                _shareApp(context);
+              },
+            ),
+            _DrawerItem(
+              icon: Icons.mail_outline,
+              label: 'Contact Us',
+              onTap: () {
+                Navigator.pop(context);
+                _showContact(context);
+              },
+            ),
+            const Spacer(),
+            const Divider(color: AppColors.divider),
+            _DrawerItem(
+              icon: Icons.logout,
+              label: 'Log Out',
+              onTap: () async {
+                Navigator.pop(context);
+                await FirebaseAuth.instance.signOut();
+                if (context.mounted) context.go('/');
+              },
+            ),
+            const Padding(
+              padding:
+                  EdgeInsets.fromLTRB(24, 4, 24, 16),
+              child: Text(
+                'Sporty v1.0.0',
+                style: TextStyle(
+                    color: AppColors.textHint,
+                    fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _shareApp(BuildContext context) {
+    Clipboard.setData(const ClipboardData(
+        text:
+            'Hey! Check out Sporty — find players for sports near you!'));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Link copied to clipboard!'),
+        backgroundColor: AppColors.success,
+      ),
+    );
+  }
+
+  void _showContact(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text(
+          'Contact Us',
+          style: TextStyle(color: AppColors.textPrimary),
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Have feedback or need help?',
+              style:
+                  TextStyle(color: AppColors.textSecondary),
+            ),
+            SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(Icons.mail_outline,
+                    color: AppColors.primary, size: 18),
+                SizedBox(width: 8),
+                Text(
+                  'support@sporty.app',
+                  style:
+                      TextStyle(color: AppColors.textPrimary),
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close',
+                style:
+                    TextStyle(color: AppColors.primary)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DrawerItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _DrawerItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon,
+          color: AppColors.textSecondary, size: 22),
+      title: Text(
+        label,
+        style: const TextStyle(
+          color: AppColors.textPrimary,
+          fontSize: 15,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      onTap: onTap,
+      horizontalTitleGap: 8,
+      contentPadding: const EdgeInsets.symmetric(
+          horizontal: 24, vertical: 2),
+    );
+  }
+}
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _FilterChip({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(right: 8),
+        padding: const EdgeInsets.symmetric(
+            horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? AppColors.primary
+              : AppColors.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected
+                ? AppColors.primary
+                : AppColors.cardBorder,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected
+                ? Colors.black
+                : AppColors.textSecondary,
+            fontWeight: isSelected
+                ? FontWeight.w600
+                : FontWeight.normal,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+}
+```
+
+---
+
+For **Fix 9 and 10** (direct messaging with host visible in group chat) — I'd recommend deferring these to Version 2. Here's why: Fix 9 requires a separate DM chat system between two users stored in Firestore. Fix 10 asks those DMs to appear inside the group chat, which would create a confusing hybrid experience — players would see private conversations mixed into the group. It's better UX to keep these separate. We can build a proper DM system in the next phase.
+
+For **Fix 11 and 12** (location) — these require the `geolocator` package and reverse geocoding. I'll implement them in the next session since they need `pubspec.yaml` changes and platform permissions setup. Ready to tackle that whenever you are.
+
+Save all files, create the `starred_games_screen.dart` file first:
+```
+New-Item -Force -Path "lib/features/profile/presentation/screens/starred_games_screen.dart" -ItemType File
+```
+
+Then paste all the code, press `R`, refresh browser. Tell me what's working!
+
+**User:**
+now joined games and your games show nothing
+
+**Assistant:**
+The Firestore queries need composite indexes for `orderBy` combined with `where`. Let's fix both screens by removing the `orderBy` and sorting in Dart instead.
+
+---
+
+## `lib/features/profile/presentation/screens/your_games_screen.dart`
+
+```dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../home/domain/game_model.dart';
+import '../../../home/presentation/widgets/game_card.dart';
+
+class YourGamesScreen extends ConsumerWidget {
+  const YourGamesScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Your Games')),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('games')
+            .where('hostId', isEqualTo: uid)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary),
+            );
+          }
+          final games = (snapshot.data?.docs
+                      .map((d) => GameModel.fromMap(
+                          d.data() as Map<String, dynamic>))
+                      .toList() ??
+                  [])
+              ..sort((a, b) => a.dateTime.compareTo(b.dateTime));
+
+          if (games.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('🏅', style: TextStyle(fontSize: 48)),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "You haven't hosted any games yet",
+                    style: TextStyle(color: AppColors.textSecondary),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 40),
+                    child: ElevatedButton(
+                      onPressed: () => context.push('/create-game'),
+                      child: const Text('Host a Game'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: games.length,
+            itemBuilder: (context, index) => GameCard(
+              game: games[index],
+              onTap: () => context.push('/game/${games[index].id}'),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+```
+
+---
+
+## `lib/features/profile/presentation/screens/joined_games_screen.dart`
+
+```dart
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import '../../../../core/constants/app_colors.dart';
+import '../../../home/domain/game_model.dart';
+import '../../../home/presentation/widgets/game_card.dart';
+
+class JoinedGamesScreen extends ConsumerWidget {
+  const JoinedGamesScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Joined Games')),
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance
+            .collection('games')
+            .where('joinedPlayerIds', arrayContains: uid)
+            .snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary),
+            );
+          }
+          final games = (snapshot.data?.docs
+                      .map((d) => GameModel.fromMap(
+                          d.data() as Map<String, dynamic>))
+                      .where((g) => g.hostId != uid)
+                      .toList() ??
+                  [])
+              ..sort((a, b) => a.dateTime.compareTo(b.dateTime));
+
+          if (games.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('🏅', style: TextStyle(fontSize: 48)),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "You haven't joined any games yet",
+                    style: TextStyle(color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 24),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 40),
+                    child: ElevatedButton(
+                      onPressed: () => context.go('/home'),
+                      child: const Text('Find a Game'),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(16),
+            itemCount: games.length,
+            itemBuilder: (context, index) => GameCard(
+              game: games[index],
+              onTap: () => context.push('/game/${games[index].id}'),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+```
+
+Save both, press `R`, refresh. Should show games now.
+
+**User:**
+You are no longer acting as a developer. You are now acting as a Senior QA Engineer, Product Manager, Security Tester, UX Reviewer, Performance Engineer, and Release Manager (temporarily until I ask you to be developer again).
+The application is approximately 80% complete.
+Your mission is to aggressively test, review, and challenge every part of the application as if it were being prepared for production release tomorrow.
+Do NOT assume anything works correctly.
+For every feature, screen, button, input field, API call, navigation path, modal, dialog, dropdown, search bar, form, authentication flow, payment flow (if any), notification, upload/download function, and edge case:
+
+1. Create a complete testing checklist.
+2. Simulate real user behavior.
+3. Simulate stupid user behavior.
+4. Simulate malicious user behavior.
+5. Simulate high-volume usage.
+6. Simulate slow network conditions.
+7. Simulate offline conditions.
+8. Simulate interrupted operations.
+9. Simulate invalid data.
+10. Simulate unexpected sequences of actions.
+For each issue found, provide:
+
+* Severity (Critical / High / Medium / Low)
+* Steps to reproduce
+* Root cause analysis
+* Recommended fix
+* Risk if left unfixed
+Review the application from the following perspectives:
+Functional Testing
+
+* Broken flows
+* Missing validations
+* Navigation issues
+* State management issues
+* Race conditions
+* Loading state problems
+* Error handling gaps
+UX Review
+
+* Confusing interactions
+* Too many clicks
+* Poor user journeys
+* Missing feedback messages
+* Accessibility concerns
+* Empty states
+* Success states
+* Error states
+Security Review
+
+* Authentication weaknesses
+* Authorization weaknesses
+* API vulnerabilities
+* Input validation issues
+* Data leakage risks
+* Sensitive information exposure
+* Local storage vulnerabilities
+* Session management issues
+Performance Review
+
+* Unnecessary API calls
+* Rebuild issues
+* Slow screens
+* Memory leaks
+* Large assets
+* Poor caching
+* Database inefficiencies
+Code Review
+
+* Technical debt
+* Poor architecture decisions
+* Duplicate code
+* Maintainability concerns
+* Scalability concerns
+* Refactoring opportunities
+Product Review
+
+* Missing features
+* Missing user protections
+* Missing analytics
+* Missing monitoring
+* Missing onboarding
+* Missing retention mechanisms
+Edge Case Discovery
+Continuously ask:
+"What happens if this fails?"
+for every action in the app.
+Generate at least:
+
+* 50 potential bugs
+* 30 edge cases
+* 20 UX improvements
+* 20 performance improvements
+* 20 security checks
+Do not stop after finding obvious issues.
+Continue reviewing until you can no longer find any realistic improvement.
+Then provide:
+
+1. Production Readiness Score (0-100)
+2. Top 20 highest-priority issues
+3. Quick wins (<1 hour fixes)
+4. Medium effort improvements
+5. High impact improvements
+6. Release blockers
+Challenge your own findings and try to find additional hidden issues before finalizing.
+Be extremely critical.
+Assume this app will be used by 100,000 users tomorrow and any bug can become expensive.
+Start by analyzing the entire current codebase and architecture before testing individual features.
+
+**Assistant:**
+# Sporty App — Full QA Audit Report
+
+---
+
+## EXECUTIVE SUMMARY
+
+Before I dive in, let me be direct: **this app is not production ready**. It's a solid MVP prototype, but shipping it to 100,000 users tomorrow would be catastrophic. Here's the complete breakdown.
+
+---
+
+# SECTION 1 — ARCHITECTURE & CODEBASE REVIEW
+
+## Critical Architecture Issues
+
+**1. No Firestore Security Rules**
+Every document in your database is publicly readable and writable by anyone on the internet. Someone can open Postman right now and delete every game in your database.
+
+**2. No Error Boundaries**
+Unhandled exceptions crash the entire app with no recovery path.
+
+**3. Riverpod State Leaks**
+`currentUserModelProvider` is a `FutureProvider` that doesn't invalidate on logout. After logout, stale user data persists in memory.
+
+**4. No Offline Handling**
+Zero offline support. No cached data, no offline indicators, no retry mechanisms.
+
+**5. Seed Data Runs Every App Launch**
+`seedSampleGames()` runs in `initState` of HomeScreen on every single launch. It checks if games exist but still makes a Firestore read call every time.
+
+---
+
+# SECTION 2 — 50 POTENTIAL BUGS
+
+## CRITICAL (App-Breaking)
+
+**Bug #1 — Anyone Can Delete Any Game**
+- Severity: CRITICAL
+- Steps: Make a direct Firestore API call with any game ID
+- Root Cause: No security rules on Firestore
+- Risk: Complete data destruction
+
+**Bug #2 — Anyone Can Read Any User's Phone Number**
+- Severity: CRITICAL
+- Steps: Query `users` collection via Firestore REST API
+- Root Cause: No security rules
+- Risk: Mass PII leak, GDPR violation
+
+**Bug #3 — Phone Number Visible in Plain Text in Firestore**
+- Severity: CRITICAL
+- Root Cause: Stored as plain string, no masking
+- Risk: Data breach exposes all user phone numbers
+
+**Bug #4 — No Session Expiry**
+- Severity: CRITICAL
+- Steps: Log in → wait 30 days → app still works
+- Root Cause: No token refresh or expiry handling
+- Risk: Stolen device = permanent account access
+
+**Bug #5 — joinGame Has Race Condition**
+- Severity: CRITICAL
+- Steps: Two users join the last spot simultaneously
+- Root Cause: `arrayUnion` doesn't check capacity atomically
+- Risk: Game can exceed `totalPlayersNeeded` by multiple players
+
+**Bug #6 — Host Can Be Removed From joinedPlayerIds**
+- Severity: CRITICAL
+- Steps: Using Firestore directly, remove hostId from joinedPlayerIds
+- Root Cause: No server-side validation
+- Risk: Host count drops, game logic breaks
+
+**Bug #7 — createGame Has No Auth Check Server-Side**
+- Severity: CRITICAL
+- Root Cause: No Firestore rules validating the hostId matches the authenticated user
+- Risk: Anyone can create games pretending to be any user
+
+**Bug #8 — OTP Brute Force Possible**
+- Severity: CRITICAL
+- Steps: Write a script to try all 1,000,000 OTP combinations
+- Root Cause: No rate limiting on OTP verification
+- Risk: Account takeover
+
+**Bug #9 — User Can Join Their Own Game**
+- Severity: HIGH
+- Steps: Be logged in as host → find game in All tab → tap Join Game
+- Root Cause: `isHost` check in `canJoin` only works if `currentUser` is loaded — if `currentUserModelProvider` is still loading, `isHost` is false
+- Risk: Host counted twice, player count corrupted
+
+**Bug #10 — Deleted Game Still Appears in Starred/Joined Lists**
+- Severity: HIGH
+- Steps: Star a game → host deletes it → check Starred Games
+- Root Cause: `starredGameIds` in user document not cleaned up on game deletion
+- Risk: Broken references, app crashes when loading deleted game detail
+
+## HIGH Severity
+
+**Bug #11 — Empty Name Allowed in Profile**
+- Steps: Clear name field → tap Save
+- Root Cause: No validation on profile save
+- Risk: Games show "Hosted by " with blank name
+
+**Bug #12 — Profile Photo Initials Show "?" After Save**
+- Steps: Save profile → go back → return to profile
+- Root Cause: `initials` getter called before `currentUserModelProvider` refreshes
+- Risk: Confusing UX
+
+**Bug #13 — Game Created in the Past**
+- Steps: Select today's date → select a time 2 hours ago → create game
+- Root Cause: No validation that `dateTime` is in the future
+- Risk: Games appear with past times, users join expired games
+
+**Bug #14 — Conflict Check Uses 2-Hour Duration Hardcoded**
+- Root Cause: All games assumed to be 2 hours regardless of actual duration
+- Risk: False conflicts or missed conflicts
+
+**Bug #15 — Leave Game Removes Host**
+- Steps: If host's UID is in `joinedPlayerIds` and host taps Leave
+- Root Cause: `leaveGame` has no check preventing host from leaving
+- Risk: Game has no host, orphaned game
+
+**Bug #16 — Chat Messages Load Entire History**
+- Root Cause: No pagination on message query
+- Risk: Game with 10,000 messages loads everything at once — OOM crash
+
+**Bug #17 — No Character Limit on Chat Messages**
+- Steps: Paste a 100,000 character message → send
+- Root Cause: No `maxLength` on TextField
+- Risk: Firestore document size exceeded (1MB limit), write fails silently
+
+**Bug #18 — Venue Field Accepts Any String**
+- Steps: Enter "aaa" as venue → create game
+- Root Cause: Only empty check, no minimum length
+- Risk: Garbage data in database
+
+**Bug #19 — Multiple Rapid Taps on Join Game**
+- Steps: Tap Join Game 5 times quickly
+- Root Cause: No debouncing or loading state lock
+- Risk: Multiple Firestore writes, player added multiple times (though arrayUnion prevents duplicates, the conflict check runs multiple times)
+
+**Bug #20 — Cancel Game Doesn't Remove From Starred Lists**
+- Same as Bug #10 but from host side
+
+**Bug #21 — Notes Field Has No Sanitation**
+- Steps: Enter `<script>alert('xss')</script>` in notes
+- Root Cause: No input sanitization
+- Risk: Low on mobile but relevant for web version
+
+**Bug #22 — Time Picker Doesn't Account for Timezone**
+- Root Cause: `DateTime.now()` uses device local time, no UTC normalization
+- Risk: Users in different timezones see wrong game times
+
+**Bug #23 — Profile Setup Can Be Skipped**
+- Steps: After OTP verification, navigate directly to `/home`
+- Root Cause: Router redirect only checks `isLoggedIn`, not `isProfileComplete`
+- Risk: Users with no name join games, shown as "Anonymous"
+
+**Bug #24 — seedSampleGames Creates Duplicate Data**
+- Steps: Clear Firestore → open app → close app → open app
+- Root Cause: The `limit(1)` check queries all games, not just sample games
+- Risk: Sample games with hardcoded IDs get overwritten on each fresh install
+
+**Bug #25 — StarredGameIds Not Initialized for Old Users**
+- Steps: Log in with account created before starred games feature
+- Root Cause: `fromMap` uses `?? []` but old Firestore documents don't have the field
+- Risk: Null pointer if field missing (actually handled, but worth verifying)
+
+**Bug #26 — Game Detail Screen Shows Wrong Data if Game Updated**
+- Steps: Open game detail → host changes time in another device → your screen doesn't update until you leave and return
+- Root Cause: Stream is set up but `when` rebuilds may not trigger properly with `ConsumerWidget`
+
+**Bug #27 — OTP Screen Auto-Submits With Wrong Code**
+- Steps: Enter 6 digits quickly (e.g., paste "000000")
+- Root Cause: `onChanged` triggers `_verifyOtp()` immediately
+- Risk: Uses up OTP attempt with wrong code before user can correct
+
+**Bug #28 — No Loading State on Profile Save**
+- Steps: Tap Save → immediately tap Save again
+- Root Cause: `_isLoading` set but button not disabled fast enough
+- Risk: Double save call
+
+**Bug #29 — Router Doesn't Handle Deep Links**
+- Root Cause: No deep link configuration
+- Risk: Share game link → app opens to home, not game detail
+
+**Bug #30 — Chat Screen Scrolls to Bottom on Every Rebuild**
+- Root Cause: `_scrollToBottom()` called inside `data:` callback which triggers on every message stream update
+- Risk: User scrolling up to read history gets snapped back down on every new message
+
+**Bug #31 — Age Field Accepts Negative Numbers**
+- Steps: Enter -5 as age
+- Root Cause: No minimum value validation
+- Risk: Invalid data stored
+
+**Bug #32 — Age Field Accepts 999**
+- Steps: Enter 999 as age
+- Root Cause: No maximum value validation
+
+**Bug #33 — Gender Selection Can't Be Cleared Once Set**
+- Actually it can (tap again), but there's no visual indicator it's clearable
+- UX Issue
+
+**Bug #34 — Joined Games Shows Host's Own Games**
+- Steps: Host creates game → checks Joined Games
+- Root Cause: `joinedPlayerIds` includes hostId, filter `g.hostId != uid` should handle it but needs verification
+
+**Bug #35 — All Chats Screen Doesn't Show Game Date**
+- Root Cause: Only shows venue, not when the game is
+- UX Issue but leads to wrong game selection
+
+**Bug #36 — No Confirmation Before Leaving Game**
+- Steps: Accidentally tap Leave Game
+- Root Cause: Direct action with no confirmation dialog
+- Risk: Users leave games by accident
+
+**Bug #37 — Create Game Shows No Feedback During Submission**
+- Steps: Tap Create Game with slow internet
+- Root Cause: Loading indicator exists but button text disappears, no toast until complete
+- Risk: User thinks app is frozen, taps again
+
+**Bug #38 — Phone Input Doesn't Validate Country Code**
+- Steps: Delete +91 prefix manually (it's hardcoded in UI but user could type wrong format)
+- Root Cause: The country code is displayed separately but the field doesn't prevent editing
+
+**Bug #39 — 10-Digit Validation Accepts Non-Indian Numbers**
+- Root Cause: Only checks length, not valid Indian number prefixes (6-9)
+- Risk: Invalid numbers consume OTP quota
+
+**Bug #40 — No Max Game Date Enforcement on Edit**
+- Steps: Host edits time but can set date 5 years in future
+- Root Cause: Edit time only changes time, not date — but original date could have been set to distant future
+
+**Bug #41 — Starred Games Query Fails if List Empty**
+- Root Cause: Firestore `whereIn` with empty array throws error
+- Already handled with early return, but worth verifying
+
+**Bug #42 — Message Input Not Cleared on Send Failure**
+- Steps: Send message with no internet → message text disappears anyway
+- Root Cause: `_messageController.clear()` called before async send completes
+
+**Bug #43 — No Retry on Failed Firestore Operations**
+- Root Cause: All Firestore calls are fire-and-forget with only SnackBar errors
+- Risk: Silent data loss on network issues
+
+**Bug #44 — Game Card Progress Bar Shows NaN if totalPlayersNeeded is 0**
+- Root Cause: `game.playersJoined / game.totalPlayersNeeded` — division by zero
+- Risk: App crash
+
+**Bug #45 — Multiple Filter Chips Can't Be Selected**
+- Root Cause: Sport filter is single-select, could be multi-select for better UX
+
+**Bug #46 — Back Button From OTP Screen Doesn't Clear Auth State**
+- Steps: Enter phone → get OTP screen → press back → enter new number
+- Root Cause: `verificationId` from first attempt still stored in `AuthController`
+- Risk: Wrong OTP verification
+
+**Bug #47 — Profile Screen Doesn't Refresh After Back Navigation**
+- Already partially fixed with `ref.invalidate`, but stream-based approach would be more reliable
+
+**Bug #48 — No Haptic Feedback**
+- Minor UX: No vibration on join, create, send — feels unresponsive
+
+**Bug #49 — App Name Shows "com.yourname.sporty"**
+- Root Cause: `--org com.yourname` used during project creation
+- Risk: This shows in Android settings, extremely unprofessional
+
+**Bug #50 — No App Icon**
+- Root Cause: Default Flutter icon still in use
+- Risk: Looks unfinished on phone home screen
+
+---
+
+# SECTION 3 — 30 EDGE CASES
+
+1. User deletes account mid-game — other players see ghost participant
+2. Two users create games at exact same millisecond — conflict check race condition
+3. User changes phone → loses account (no account recovery)
+4. Game date passes — should auto-archive, currently stays visible
+5. All 22 players join simultaneously — race condition on capacity check
+6. User is in game chat → host cancels game → chat still accessible but game doesn't exist
+7. User stars a game → joins it → leaves it → stars still show game
+8. User with no sports selected creates a game
+9. User enters emoji in name field — initials getter may crash on emoji characters
+10. Very long venue name overflows game card
+11. Very long sport name (if someone adds custom sport somehow)
+12. User opens same game detail on two devices simultaneously and joins on both
+13. Host edits time while players are viewing game detail — they see stale time
+14. Network drops exactly during OTP send — app shows loading forever
+15. Network drops during game creation — game may or may not be created, user doesn't know
+16. User force-closes app during profile setup — profile not saved
+17. User tries to join game that was just made full by someone else (race condition)
+18. Starred game list exceeds Firestore `whereIn` limit of 30 items
+19. User changes device — `starredGameIds` lost (actually stored in Firestore, fine)
+20. User has 0 joined games and 0 hosted games — Your Games shows empty correctly?
+21. Firebase Auth token expires mid-session
+22. Phone number with spaces or dashes entered
+23. Copy-paste OTP from SMS — hidden characters may be included
+24. User rotates screen mid-form — state preserved? (Web yes, mobile possibly no)
+25. User with extremely slow connection sees loading spinners for 30+ seconds with no timeout
+26. Two people with same name — no disambiguation in player list
+27. Game with 1 player needed (minimum 1) — host joins, game immediately full
+28. User taps back during OTP verification — goes to phone screen with wrong state
+29. Date picker selects today but time is in the past
+30. User opens app with airplane mode — no error shown, just infinite loading
+
+---
+
+# SECTION 4 — 20 UX IMPROVEMENTS
+
+1. **No onboarding** — first-time users have no idea what the app does
+2. **No empty state on home screen for new users** — show "Welcome! Create your first game"
+3. **No success animation on join** — just a snackbar feels weak
+4. **Filter chips don't show game count** — "Badminton (3)" would be more useful
+5. **No search functionality** — can't search by venue or date
+6. **Game cards don't show if game is today vs tomorrow** — "Today at 4pm" is clearer than "Tue, Jun 10"
+7. **No way to share a specific game** — share button on game detail would drive signups
+8. **Profile photo is initials only with no option to change** — placeholder for future but no message saying "photo upload coming soon"
+9. **No pull-to-refresh** on any list screen
+10. **Chat has no message timestamps** — can't tell when messages were sent
+11. **No "read receipts" or online indicators** in chat
+12. **Leave Game button is too easy to tap accidentally** — needs confirmation dialog
+13. **No notification badge on chat icon** — can't tell if there are unread messages
+14. **Create Game form resets if you press back** — no draft saving
+15. **No sport emoji in filter chips** — "🏸 Badminton" is more scannable
+16. **Game detail has no map/directions link** — for venue navigation
+17. **No "copy venue address" button**
+18. **Drawer closes but page takes a moment to navigate** — feels laggy
+19. **No skeleton loading screens** — content pops in abruptly
+20. **No dark/light mode toggle** — only dark mode available
+
+---
+
+# SECTION 5 — 20 PERFORMANCE IMPROVEMENTS
+
+1. **No pagination on game list** — loads ALL games from Firestore on every open
+2. **No pagination on chat messages** — loads entire chat history
+3. **`seedSampleGames()` runs on every HomeScreen mount** — unnecessary Firestore read
+4. **`currentUserModelProvider` is `FutureProvider` not `StreamProvider`** — doesn't auto-update when user data changes
+5. **`gameStreamProvider` creates new stream on every widget rebuild** — should be cached
+6. **No image caching** — `cached_network_image` is installed but not used anywhere (no profile photos yet)
+7. **Firestore queries not indexed** — `orderBy` + `where` combinations will fail or be slow at scale
+8. **`home_controller.dart` filteredGamesProvider sorts on every rebuild** — should memoize
+9. **Chat screen calls `_scrollToBottom()` inside stream callback** — triggers on every rebuild
+10. **`getHostId` in chat_repository makes a separate Firestore read** — should come from game stream already loaded
+11. **No connection state handler** — app makes Firestore calls even when offline
+12. **`seedSampleGames` queries Firestore on every app open** — cache this check locally
+13. **Widget rebuilds too aggressively** — many `ConsumerWidget`s watching broad providers
+14. **No Firestore offline persistence enabled** — `FirebaseFirestore.instance.settings` not configured
+15. **Auth state stream rebuilds entire router** on every auth change
+16. **Game cards rebuild entire list when one game changes** — should use `ListView.separated` with keys
+17. **No lazy loading of game detail** — loads all fields even if user just glances
+18. **`StarredGamesScreen` makes two nested stream builders** — inefficient
+19. **`filteredGamesProvider` recalculates on sport filter AND games change** — could be split
+20. **No local storage of last known state** — every app open starts from scratch
+
+---
+
+# SECTION 6 — 20 SECURITY CHECKS
+
+1. ❌ **Firestore rules allow anyone to read/write** — CRITICAL
+2. ❌ **No server-side validation of hostId on game creation**
+3. ❌ **Phone numbers stored in plain text**
+4. ❌ **No rate limiting on any endpoint**
+5. ❌ **OTP brute force not prevented**
+6. ❌ **No App Check configured** (we saw this warning in logs)
+7. ❌ **No input sanitization on any text field**
+8. ❌ **`starredGameIds` can be manipulated client-side**
+9. ❌ **Any authenticated user can modify any other user's document**
+10. ❌ **Any authenticated user can delete any game**
+11. ❌ **Chat messages have no content moderation**
+12. ❌ **No profanity filter or reporting mechanism**
+13. ❌ **User can set any `hostId` when creating a game via direct API call**
+14. ❌ **No account lockout after failed OTP attempts**
+15. ❌ **Firebase config keys visible in `firebase_options.dart`** — acceptable for mobile but web deployment exposes them
+16. ❌ **No HTTPS pinning** (less critical for Firebase SDK)
+17. ❌ **Debug mode enabled in production build** — `debugShowCheckedModeBanner: false` set but build mode not enforced
+18. ❌ **No audit log of sensitive actions** (cancel game, leave game)
+19. ❌ **`joinedPlayerIds` can be modified by anyone via direct Firestore call**
+20. ❌ **No data retention or deletion policy** — GDPR non-compliant
+
+---
+
+# SECTION 7 — PRODUCTION READINESS SCORE
+
+```
+Security:          8/100   ← Firestore wide open
+Data Integrity:   20/100   ← No atomic operations, race conditions
+Error Handling:   25/100   ← Many silent failures
+Performance:      35/100   ← No pagination, unnecessary calls
+UX Polish:        45/100   ← Missing feedback, no onboarding
+Feature Complete: 65/100   ← Core flows work
+Code Quality:     55/100   ← Technical debt accumulating
+
+OVERALL SCORE:    32/100
+```
+
+---
+
+# SECTION 8 — TOP 20 HIGHEST PRIORITY ISSUES
+
+| Priority | Issue | Severity |
+|---|---|---|
+| 1 | Firestore security rules — database is wide open | CRITICAL |
+| 2 | Race condition on join game capacity | CRITICAL |
+| 3 | OTP brute force — no rate limiting | CRITICAL |
+| 4 | Games created in the past allowed | CRITICAL |
+| 5 | Host can be removed from game | CRITICAL |
+| 6 | No pagination — app will crash at scale | CRITICAL |
+| 7 | Phone numbers exposed in Firestore | CRITICAL |
+| 8 | No confirmation before Leave Game | HIGH |
+| 9 | Stale auth state after logout | HIGH |
+| 10 | Deleted game stays in starred/joined lists | HIGH |
+| 11 | No offline error handling | HIGH |
+| 12 | Empty name allowed in profile | HIGH |
+| 13 | App package ID is `com.yourname.sporty` | HIGH |
+| 14 | No app icon | HIGH |
+| 15 | Chat loads entire history | HIGH |
+| 16 | No loading timeout on any operation | MEDIUM |
+| 17 | Timezone not handled | MEDIUM |
+| 18 | No onboarding for new users | MEDIUM |
+| 19 | `seedSampleGames` runs every launch | MEDIUM |
+| 20 | No pull-to-refresh on lists | MEDIUM |
+
+---
+
+# SECTION 9 — QUICK WINS (Under 1 Hour Each)
+
+1. Add confirmation dialog before Leave Game
+2. Validate name is not empty before profile save
+3. Validate game `dateTime` is in the future before creating
+4. Validate age is between 1 and 100
+5. Add `maxLength: 500` to chat message field
+6. Add `maxLength: 200` to venue field
+7. Add `minLength: 3` validation to venue field
+8. Remove `debugShowCheckedModeBanner` (already done)
+9. Add pull-to-refresh to Home and game list screens
+10. Show game date as "Today" / "Tomorrow" / actual date
+11. Add confirmation dialog before Cancel Game (already done, verify it works)
+12. Disable Send button when message is empty
+13. Validate phone starts with 6, 7, 8, or 9 for Indian numbers
+14. Add `keyboardType: TextInputType.name` to name field
+15. Fix app name from `com.yourname.sporty` to `com.sporty.app`
+
+---
+
+# SECTION 10 — RELEASE BLOCKERS
+
+These must be fixed before any public release:
+
+1. **Firestore Security Rules** — without these, the app cannot go live
+2. **Race condition on game capacity** — use Firestore transactions
+3. **No app icon** — App Store / Play Store will reject without it
+4. **Wrong package name** — `com.yourname.sporty` is embarrassing
+5. **Past game creation allowed** — fundamental data integrity issue
+6. **OTP rate limiting** — Firebase handles some of this but App Check must be enabled
+7. **No pagination** — will cause OOM crashes with real data volume
+8. **Phone number privacy** — Firestore rules must restrict user data access
+
+---
+
+# MY RECOMMENDATION
+
+**Do not ship this to real users yet.**
+
+The app is a well-built prototype with good UX foundations. But the security layer is completely missing. Anyone with basic Firestore knowledge can destroy your entire database in 30 seconds.
+
+**Suggested next 3 sessions with the developer:**
+
+**Session 1:** Firestore security rules + fix race conditions with transactions + pagination
+**Session 2:** App icon + package rename + past date validation + Leave Game confirmation + offline handling
+**Session 3:** Onboarding flow + performance optimizations + App Check setup
+
+After those three sessions, re-run this audit. The score should reach 70+, which is acceptable for a soft launch with a small group of beta users.
+
+---
+
+_Continue from here. The user's next message will follow._
